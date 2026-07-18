@@ -1,0 +1,1494 @@
+name: Open3D CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      developer_build:
+        description: 'Set to OFF for Release builds'
+        required: false
+        default: 'ON'
+      python_versions:
+        description: 'Python versions to test (comma-separated)'
+        required: false
+        default: '3.10,3.11,3.12,3.13,3.14'
+      build_cuda:
+        description: 'Build with CUDA support'
+        type: boolean
+        required: false
+        default: true
+      build_cpu:
+        description: 'Build CPU-only variant'
+        type: boolean
+        required: false
+        default: true
+      build_sycl:
+        description: 'Build with SYCL support'
+        type: boolean
+        required: false
+        default: false
+      build_openblas:
+        description: 'Build with OpenBLAS (ARM64)'
+        type: boolean
+        required: false
+        default: false
+      upload_wheels:
+        description: 'Upload wheels to PyPI (main branch only)'
+        type: boolean
+        required: false
+        default: false
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, reopened, synchronize]
+  schedule:
+    - cron: '0 2 * * 0'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+env:
+  PYTHON_VERSIONS: ${{ github.event.inputs.python_versions || '3.10,3.11,3.12,3.13,3.14' }}
+  DEVELOPER_BUILD: ${{ github.event.inputs.developer_build || 'ON' }}
+  BUILD_CUDA: ${{ github.event.inputs.build_cuda || 'true' }}
+  BUILD_CPU: ${{ github.event.inputs.build_cpu || 'true' }}
+  BUILD_SYCL: ${{ github.event.inputs.build_sycl || 'false' }}
+  BUILD_OPENBLAS: ${{ github.event.inputs.build_openblas || 'false' }}
+  UPLOAD_WHEELS: ${{ github.event.inputs.upload_wheels || 'false' }}
+  BUILD_SHARED_LIBS: ON
+  BUILD_TENSORFLOW_OPS: ON
+  BUILD_PYTORCH_OPS: ON
+  CUDA_DOCKER_IMAGE: nvidia/cuda:12.6.0-devel-ubuntu22.04
+  CPU_DOCKER_IMAGE: ubuntu:22.04
+  ARM64_DOCKER_IMAGE: ubuntu:24.04
+  SYCL_DOCKER_IMAGE: intel/oneapi-basekit:2024.2-devel-ubuntu22.04
+  CCACHE_DIR: /tmp/ccache
+
+jobs:
+  # ============================================================
+  # STYLE CHECK
+  # ============================================================
+  style-check:
+    name: Style Check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install style dependencies
+        run: pip install -U -r python/requirements_style.txt
+      - name: Run style check
+        run: python util/check_style.py
+
+  # ============================================================
+  # LINUX x86_64 CUDA BUILD
+  # ============================================================
+  linux-cuda-build-lib:
+    name: Linux CUDA Build Lib
+    if: ${{ env.BUILD_CUDA == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      BUILD_CUDA_MODULE: ON
+      BUILD_CPU_RENDERING: true
+      BUILD_PYTORCH_OPS: OFF
+      BUILD_TENSORFLOW_OPS: OFF
+      OPEN3D_CPU_RENDERING: true
+      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Maximize build space
+        run: |
+          source util/ci_utils.sh
+          maximize_ubuntu_github_actions_build_space
+      - name: Docker build CUDA lib packages
+        run: |
+          docker/docker_build.sh cuda_wheel_py312_dev build-lib
+          ls -lh open3d-devel-*.tar.xz open3d-viewer-*.deb open3d-cpp-tests.tar.xz
+      - name: Upload devel packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: open3d-devel-packages-cuda
+          path: |
+            open3d-devel-*.tar.xz
+            open3d-viewer-*.deb
+          if-no-files-found: error
+      - name: Upload C++ tests bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: open3d-cpp-tests-cuda
+          path: open3d-cpp-tests.tar.xz
+          if-no-files-found: error
+          retention-days: 1
+
+  linux-cuda-test-cpp:
+    name: Linux CUDA Test C++
+    if: ${{ env.BUILD_CUDA == 'true' }}
+    runs-on: ubuntu-22.04
+    needs: [linux-cuda-build-lib]
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Download C++ tests bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: open3d-cpp-tests-cuda
+          path: .
+      - name: Install runtime dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libegl1
+      - name: Run C++ unit tests
+        run: |
+          source util/ci_utils.sh
+          run_cpp_tests_from_bundle open3d-cpp-tests.tar.xz
+
+  linux-cuda-build-wheel:
+    name: Linux CUDA Build Wheel
+    if: ${{ env.BUILD_CUDA == 'true' }}
+    needs: [linux-cuda-build-lib]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: [3.10, 3.11, 3.12, 3.13, 3.14]
+        is_main:
+          - ${{ github.ref == 'refs/heads/main' }}
+        exclude:
+          - is_main: false
+            python_version: '3.10'
+          - is_main: false
+            python_version: '3.11'
+          - is_main: false
+            python_version: '3.12'
+          - is_main: false
+            python_version: '3.13'
+    env:
+      PYTHON_VERSION: ${{ matrix.python_version }}
+      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      BUILD_PYTORCH_OPS: ON
+      BUILD_TENSORFLOW_OPS: ${{ matrix.python_version >= '3.14' && 'OFF' || 'ON' }}
+      CCACHE_TAR_NAME: open3d-ubuntu-2204-cuda-ci-ccache
+      OPEN3D_CPU_RENDERING: true
+      BUILD_CUDA_MODULE: ON
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Maximize build space
+        run: |
+          source util/ci_utils.sh
+          maximize_ubuntu_github_actions_build_space
+      - name: Download devel packages
+        uses: actions/download-artifact@v4
+        with:
+          name: open3d-devel-packages-cuda
+          path: open3d-artifacts
+      - name: List devel artifacts
+        run: ls -lh open3d-artifacts/
+      - name: Docker build wheel
+        run: |
+          export OPEN3D_ARTIFACTS_DIR="${GITHUB_WORKSPACE}/open3d-artifacts"
+          PY_VER="${{ env.PYTHON_VERSION }}"
+          DEV_BUILD="${{ env.DEVELOPER_BUILD }}"
+          if [ "$PY_VER" = "3.10" ] && [ "$DEV_BUILD" = "ON" ]; then
+            docker/docker_build.sh cuda_wheel_py310_dev
+          elif [ "$PY_VER" = "3.11" ] && [ "$DEV_BUILD" = "ON" ]; then
+            docker/docker_build.sh cuda_wheel_py311_dev
+          elif [ "$PY_VER" = "3.12" ] && [ "$DEV_BUILD" = "ON" ]; then
+            docker/docker_build.sh cuda_wheel_py312_dev
+          elif [ "$PY_VER" = "3.13" ] && [ "$DEV_BUILD" = "ON" ]; then
+            docker/docker_build.sh cuda_wheel_py313_dev
+          elif [ "$PY_VER" = "3.14" ] && [ "$DEV_BUILD" = "ON" ]; then
+            docker/docker_build.sh cuda_wheel_py314_dev
+          elif [ "$PY_VER" = "3.10" ] && [ "$DEV_BUILD" = "OFF" ]; then
+            docker/docker_build.sh cuda_wheel_py310
+          elif [ "$PY_VER" = "3.11" ] && [ "$DEV_BUILD" = "OFF" ]; then
+            docker/docker_build.sh cuda_wheel_py311
+          elif [ "$PY_VER" = "3.12" ] && [ "$DEV_BUILD" = "OFF" ]; then
+            docker/docker_build.sh cuda_wheel_py312
+          elif [ "$PY_VER" = "3.13" ] && [ "$DEV_BUILD" = "OFF" ]; then
+            docker/docker_build.sh cuda_wheel_py313
+          elif [ "$PY_VER" = "3.14" ] && [ "$DEV_BUILD" = "OFF" ]; then
+            docker/docker_build.sh cuda_wheel_py314
+          fi
+          shopt -s failglob
+          PIP_PKG_NAME="$(basename ${GITHUB_WORKSPACE}/open3d-[0-9]*.whl)"
+          PIP_CPU_PKG_NAME="$(basename ${GITHUB_WORKSPACE}/open3d_cpu*.whl)"
+          echo "PIP_PKG_NAME=$PIP_PKG_NAME" >> $GITHUB_ENV
+          echo "PIP_CPU_PKG_NAME=$PIP_CPU_PKG_NAME" >> $GITHUB_ENV
+      - name: Generate artifact attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            ${{ github.workspace }}/${{ env.PIP_PKG_NAME }}
+            ${{ github.workspace }}/${{ env.PIP_CPU_PKG_NAME }}
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PIP_PKG_NAME }}
+          path: |
+            ${{ env.PIP_PKG_NAME }}
+            ${{ env.PIP_CPU_PKG_NAME }}
+          if-no-files-found: error
+      - name: Update devel release
+        if: ${{ github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .github/workflows/update_release.sh ${GITHUB_WORKSPACE}/${{ env.PIP_PKG_NAME }} \
+          ${GITHUB_WORKSPACE}/${{ env.PIP_CPU_PKG_NAME }}
+
+  linux-cuda-test-wheel:
+    name: Linux CUDA Test Wheel
+    if: ${{ env.BUILD_CUDA == 'true' }}
+    needs: [linux-cuda-build-wheel]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: [3.10, 3.11, 3.12, 3.13, 3.14]
+        is_main:
+          - ${{ github.ref == 'refs/heads/main' }}
+        exclude:
+          - is_main: false
+            python_version: '3.10'
+          - is_main: false
+            python_version: '3.11'
+          - is_main: false
+            python_version: '3.12'
+          - is_main: false
+            python_version: '3.13'
+    env:
+      BUILD_PYTORCH_OPS: ON
+      BUILD_TENSORFLOW_OPS: ${{ matrix.python_version >= '3.14' && 'OFF' || 'ON' }}
+      OPEN3D_ML_ROOT: ${{ github.workspace }}/Open3D-ML
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Checkout Open3D-ML
+        uses: actions/checkout@v4
+        with:
+          repository: isl-org/Open3D-ML
+          ref: main
+          path: ${{ env.OPEN3D_ML_ROOT }}
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: open3d-*linux*.whl
+          merge-multiple: true
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python_version }}
+      - name: Test Python package
+        run: |
+          python -V
+          source util/ci_utils.sh
+          pi_tag=$(python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
+          test_wheel open3d*-"$pi_tag"-*_$(uname -m).whl
+      - name: Run Python unit tests
+        run: |
+          source util/ci_utils.sh
+          echo "Running Open3D python tests..."
+          run_python_tests
+
+  # ============================================================
+  # LINUX x86_64 CPU-ONLY BUILD
+  # ============================================================
+  linux-cpu-build-lib:
+    name: Linux CPU Build Lib
+    if: ${{ env.BUILD_CPU == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        BUILD_SHARED_LIBS: [ON, OFF]
+    env:
+      BUILD_SHARED_LIBS: ${{ matrix.BUILD_SHARED_LIBS }}
+      MLOPS: ${{ matrix.BUILD_SHARED_LIBS }}
+      BUILD_CUDA_MODULE: OFF
+      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      OPEN3D_CPU_RENDERING: true
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Maximize build space
+        run: |
+          source util/ci_utils.sh
+          maximize_ubuntu_github_actions_build_space
+      - name: Docker build CPU lib packages
+        run: |
+          if [ "${{ matrix.BUILD_SHARED_LIBS }}" = "OFF" ] && [ "${{ env.MLOPS }}" = "OFF" ] && [ "${{ env.DEVELOPER_BUILD }}" = "ON" ]; then
+            docker/docker_build.sh cpu-static
+          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "OFF" ] && [ "${{ env.MLOPS }}" = "OFF" ] && [ "${{ env.DEVELOPER_BUILD }}" = "OFF" ]; then
+            docker/docker_build.sh cpu-static-release
+          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "ON"  ] && [ "${{ env.MLOPS }}" = "ON"  ] && [ "${{ env.DEVELOPER_BUILD }}" = "ON"  ]; then
+            docker/docker_build.sh cpu-shared-ml
+          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "ON"  ] && [ "${{ env.MLOPS }}" = "ON"  ] && [ "${{ env.DEVELOPER_BUILD }}" = "OFF" ]; then
+            docker/docker_build.sh cpu-shared-ml-release
+          fi
+      - name: Docker test
+        run: |
+          if [ "${{ matrix.BUILD_SHARED_LIBS }}" = "OFF" ] && [ "${{ env.MLOPS }}" = "OFF" ] && [ "${{ env.DEVELOPER_BUILD }}" = "ON" ]; then
+            docker/docker_test.sh cpu-static
+          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "OFF" ] && [ "${{ env.MLOPS }}" = "OFF" ] && [ "${{ env.DEVELOPER_BUILD }}" = "OFF" ]; then
+            docker/docker_test.sh cpu-static-release
+          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "ON"  ] && [ "${{ env.MLOPS }}" = "ON"  ] && [ "${{ env.DEVELOPER_BUILD }}" = "ON"  ]; then
+            docker/docker_test.sh cpu-shared-ml
+          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "ON"  ] && [ "${{ env.MLOPS }}" = "ON"  ] && [ "${{ env.DEVELOPER_BUILD }}" = "OFF" ]; then
+            docker/docker_test.sh cpu-shared-ml-release
+          fi
+      - name: Generate package attestation
+        if: ${{ matrix.BUILD_SHARED_LIBS == 'ON' }}
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ github.workspace }}/open3d-devel-*.tar.xz
+      - name: Upload package to GitHub artifacts
+        if: ${{ matrix.BUILD_SHARED_LIBS == 'ON' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: open3d-devel-linux-x86_64-cpu
+          path: open3d-devel-*.tar.xz
+          if-no-files-found: error
+      - name: Upload wheel to GitHub artifacts
+        if: ${{ matrix.BUILD_SHARED_LIBS == 'ON' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: open3d-wheel-linux-x86_64-cpu
+          path: open3d*.whl
+          if-no-files-found: error
+      - name: Generate viewer attestation
+        if: ${{ matrix.BUILD_SHARED_LIBS == 'OFF' }}
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ github.workspace }}/open3d-viewer-*-Linux.deb
+      - name: Upload viewer to GitHub artifacts
+        if: ${{ matrix.BUILD_SHARED_LIBS == 'OFF' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: open3d-viewer-Linux-cpu
+          path: open3d-viewer-*-Linux.deb
+          if-no-files-found: error
+      - name: Update devel release
+        if: ${{ github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ${{ env.BUILD_SHARED_LIBS }} == 'ON' ] ; then
+            .github/workflows/update_release.sh open3d-devel-*.tar.xz
+          else
+            .github/workflows/update_release.sh open3d-viewer-*-Linux.deb
+          fi
+
+  # ============================================================
+  # LINUX ARM64 OPENBLAS BUILD
+  # ============================================================
+  linux-arm64-build-lib:
+    name: Linux ARM64 Build Lib
+    if: ${{ env.BUILD_OPENBLAS == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      BUILD_CUDA_MODULE: OFF
+      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      OPEN3D_CPU_RENDERING: true
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Maximize build space
+        run: |
+          source util/ci_utils.sh
+          maximize_ubuntu_github_actions_build_space
+      - name: Docker build ARM64 OpenBLAS
+        run: |
+          docker/docker_build.sh openblas_dev build-lib
+          ls -lh open3d-devel-*.tar.xz open3d-viewer-*.deb
+      - name: Upload devel packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: open3d-devel-packages-arm64
+          path: |
+            open3d-devel-*.tar.xz
+            open3d-viewer-*.deb
+          if-no-files-found: error
+
+  linux-arm64-build-wheel:
+    name: Linux ARM64 Build Wheel
+    if: ${{ env.BUILD_OPENBLAS == 'true' }}
+    needs: [linux-arm64-build-lib]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: [3.10, 3.11, 3.12, 3.13, 3.14]
+        is_main:
+          - ${{ github.ref == 'refs/heads/main' }}
+        exclude:
+          - is_main: false
+            python_version: '3.10'
+          - is_main: false
+            python_version: '3.11'
+          - is_main: false
+            python_version: '3.12'
+          - is_main: false
+            python_version: '3.13'
+    env:
+      PYTHON_VERSION: ${{ matrix.python_version }}
+      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      BUILD_PYTORCH_OPS: ON
+      BUILD_TENSORFLOW_OPS: ${{ matrix.python_version >= '3.14' && 'OFF' || 'ON' }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Maximize build space
+        run: |
+          source util/ci_utils.sh
+          maximize_ubuntu_github_actions_build_space
+      - name: Download devel packages
+        uses: actions/download-artifact@v4
+        with:
+          name: open3d-devel-packages-arm64
+          path: open3d-artifacts
+      - name: Docker build ARM64 wheel
+        run: |
+          export OPEN3D_ARTIFACTS_DIR="${GITHUB_WORKSPACE}/open3d-artifacts"
+          PY_VER="${{ env.PYTHON_VERSION }}"
+          DEV_BUILD="${{ env.DEVELOPER_BUILD }}"
+          if [ "$PY_VER" = "3.10" ] && [ "$DEV_BUILD" = "ON" ]; then
+            docker/docker_build.sh openblas_wheel_py310_dev
+          elif [ "$PY_VER" = "3.11" ] && [ "$DEV_BUILD" = "ON" ]; then
+            docker/docker_build.sh openblas_wheel_py311_dev
+          elif [ "$PY_VER" = "3.12" ] && [ "$DEV_BUILD" = "ON" ]; then
+            docker/docker_build.sh openblas_wheel_py312_dev
+          elif [ "$PY_VER" = "3.13" ] && [ "$DEV_BUILD" = "ON" ]; then
+            docker/docker_build.sh openblas_wheel_py313_dev
+          elif [ "$PY_VER" = "3.14" ] && [ "$DEV_BUILD" = "ON" ]; then
+            docker/docker_build.sh openblas_wheel_py314_dev
+          elif [ "$PY_VER" = "3.10" ] && [ "$DEV_BUILD" = "OFF" ]; then
+            docker/docker_build.sh openblas_wheel_py310
+          elif [ "$PY_VER" = "3.11" ] && [ "$DEV_BUILD" = "OFF" ]; then
+            docker/docker_build.sh openblas_wheel_py311
+          elif [ "$PY_VER" = "3.12" ] && [ "$DEV_BUILD" = "OFF" ]; then
+            docker/docker_build.sh openblas_wheel_py312
+          elif [ "$PY_VER" = "3.13" ] && [ "$DEV_BUILD" = "OFF" ]; then
+            docker/docker_build.sh openblas_wheel_py313
+          elif [ "$PY_VER" = "3.14" ] && [ "$DEV_BUILD" = "OFF" ]; then
+            docker/docker_build.sh openblas_wheel_py314
+          fi
+          shopt -s failglob
+          PIP_PKG_NAME="$(basename ${GITHUB_WORKSPACE}/open3d-[0-9]*.whl)"
+          echo "PIP_PKG_NAME=$PIP_PKG_NAME" >> $GITHUB_ENV
+      - name: Generate artifact attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ github.workspace }}/${{ env.PIP_PKG_NAME }}
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PIP_PKG_NAME }}
+          path: ${{ env.PIP_PKG_NAME }}
+          if-no-files-found: error
+      - name: Update devel release
+        if: ${{ github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .github/workflows/update_release.sh ${GITHUB_WORKSPACE}/${{ env.PIP_PKG_NAME }}
+
+  linux-arm64-test-wheel:
+    name: Linux ARM64 Test Wheel
+    if: ${{ env.BUILD_OPENBLAS == 'true' }}
+    needs: [linux-arm64-build-wheel]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: [3.10, 3.11, 3.12, 3.13, 3.14]
+        is_main:
+          - ${{ github.ref == 'refs/heads/main' }}
+        exclude:
+          - is_main: false
+            python_version: '3.10'
+          - is_main: false
+            python_version: '3.11'
+          - is_main: false
+            python_version: '3.12'
+          - is_main: false
+            python_version: '3.13'
+    env:
+      BUILD_PYTORCH_OPS: ON
+      BUILD_TENSORFLOW_OPS: ${{ matrix.python_version >= '3.14' && 'OFF' || 'ON' }}
+      OPEN3D_ML_ROOT: ${{ github.workspace }}/Open3D-ML
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Checkout Open3D-ML
+        uses: actions/checkout@v4
+        with:
+          repository: isl-org/Open3D-ML
+          ref: main
+          path: ${{ env.OPEN3D_ML_ROOT }}
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: open3d-*linux*.whl
+          merge-multiple: true
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python_version }}
+      - name: Test Python package
+        run: |
+          python -V
+          source util/ci_utils.sh
+          pi_tag=$(python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
+          test_wheel open3d*-"$pi_tag"-*_$(uname -m).whl
+      - name: Run Python unit tests
+        run: |
+          source util/ci_utils.sh
+          echo "Running Open3D python tests..."
+          run_python_tests
+
+  # ============================================================
+  # LINUX SYCL BUILD
+  # ============================================================
+  linux-sycl-build-lib:
+    name: Linux SYCL Build Lib
+    if: ${{ env.BUILD_SYCL == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      BUILD_CUDA_MODULE: OFF
+      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      OPEN3D_CPU_RENDERING: true
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Maximize build space
+        run: |
+          source util/ci_utils.sh
+          maximize_ubuntu_github_actions_build_space
+      - name: Docker build SYCL
+        run: |
+          docker/docker_build.sh sycl_dev build-lib
+          ls -lh open3d-devel-*.tar.xz open3d-viewer-*.deb
+      - name: Upload devel packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: open3d-devel-packages-sycl
+          path: |
+            open3d-devel-*.tar.xz
+            open3d-viewer-*.deb
+          if-no-files-found: error
+
+  linux-sycl-build-wheel:
+    name: Linux SYCL Build Wheel
+    if: ${{ env.BUILD_SYCL == 'true' }}
+    needs: [linux-sycl-build-lib]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: [3.10, 3.11, 3.12, 3.13]
+        is_main:
+          - ${{ github.ref == 'refs/heads/main' }}
+        exclude:
+          - is_main: false
+            python_version: '3.10'
+          - is_main: false
+            python_version: '3.11'
+          - is_main: false
+            python_version: '3.12'
+          - is_main: false
+            python_version: '3.13'
+    env:
+      PYTHON_VERSION: ${{ matrix.python_version }}
+      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      BUILD_PYTORCH_OPS: ON
+      BUILD_TENSORFLOW_OPS: ON
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Maximize build space
+        run: |
+          source util/ci_utils.sh
+          maximize_ubuntu_github_actions_build_space
+      - name: Download devel packages
+        uses: actions/download-artifact@v4
+        with:
+          name: open3d-devel-packages-sycl
+          path: open3d-artifacts
+      - name: Docker build SYCL wheel
+        run: |
+          export OPEN3D_ARTIFACTS_DIR="${GITHUB_WORKSPACE}/open3d-artifacts"
+          PY_VER="${{ env.PYTHON_VERSION }}"
+          DEV_BUILD="${{ env.DEVELOPER_BUILD }}"
+          if [ "$PY_VER" = "3.10" ] && [ "$DEV_BUILD" = "ON" ]; then
+            docker/docker_build.sh sycl_wheel_py310_dev
+          elif [ "$PY_VER" = "3.11" ] && [ "$DEV_BUILD" = "ON" ]; then
+            docker/docker_build.sh sycl_wheel_py311_dev
+          elif [ "$PY_VER" = "3.12" ] && [ "$DEV_BUILD" = "ON" ]; then
+            docker/docker_build.sh sycl_wheel_py312_dev
+          elif [ "$PY_VER" = "3.13" ] && [ "$DEV_BUILD" = "ON" ]; then
+            docker/docker_build.sh sycl_wheel_py313_dev
+          elif [ "$PY_VER" = "3.10" ] && [ "$DEV_BUILD" = "OFF" ]; then
+            docker/docker_build.sh sycl_wheel_py310
+          elif [ "$PY_VER" = "3.11" ] && [ "$DEV_BUILD" = "OFF" ]; then
+            docker/docker_build.sh sycl_wheel_py311
+          elif [ "$PY_VER" = "3.12" ] && [ "$DEV_BUILD" = "OFF" ]; then
+            docker/docker_build.sh sycl_wheel_py312
+          elif [ "$PY_VER" = "3.13" ] && [ "$DEV_BUILD" = "OFF" ]; then
+            docker/docker_build.sh sycl_wheel_py313
+          fi
+          shopt -s failglob
+          PIP_PKG_NAME="$(basename ${GITHUB_WORKSPACE}/open3d-[0-9]*.whl)"
+          echo "PIP_PKG_NAME=$PIP_PKG_NAME" >> $GITHUB_ENV
+      - name: Generate artifact attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ github.workspace }}/${{ env.PIP_PKG_NAME }}
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PIP_PKG_NAME }}
+          path: ${{ env.PIP_PKG_NAME }}
+          if-no-files-found: error
+      - name: Update devel release
+        if: ${{ github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .github/workflows/update_release.sh ${GITHUB_WORKSPACE}/${{ env.PIP_PKG_NAME }}
+
+  linux-sycl-test-wheel:
+    name: Linux SYCL Test Wheel
+    if: ${{ env.BUILD_SYCL == 'true' }}
+    needs: [linux-sycl-build-wheel]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: [3.10, 3.11, 3.12, 3.13]
+        is_main:
+          - ${{ github.ref == 'refs/heads/main' }}
+        exclude:
+          - is_main: false
+            python_version: '3.10'
+          - is_main: false
+            python_version: '3.11'
+          - is_main: false
+            python_version: '3.12'
+          - is_main: false
+            python_version: '3.13'
+    env:
+      BUILD_PYTORCH_OPS: ON
+      BUILD_TENSORFLOW_OPS: ON
+      OPEN3D_ML_ROOT: ${{ github.workspace }}/Open3D-ML
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Checkout Open3D-ML
+        uses: actions/checkout@v4
+        with:
+          repository: isl-org/Open3D-ML
+          ref: main
+          path: ${{ env.OPEN3D_ML_ROOT }}
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: open3d-*linux*.whl
+          merge-multiple: true
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python_version }}
+      - name: Test Python package
+        run: |
+          python -V
+          source util/ci_utils.sh
+          pi_tag=$(python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
+          test_wheel open3d*-"$pi_tag"-*_$(uname -m).whl
+      - name: Run Python unit tests
+        run: |
+          source util/ci_utils.sh
+          echo "Running Open3D python tests..."
+          run_python_tests
+
+  # ============================================================
+  # WINDOWS x86_64 CUDA/CPU BUILD
+  # ============================================================
+  windows-build-lib:
+    name: Windows Build Lib
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        BUILD_SHARED_LIBS: [ON, OFF]
+        STATIC_RUNTIME: [ON, OFF]
+        BUILD_CUDA_MODULE: [ON, OFF]
+        CONFIG: [Release, Debug]
+        exclude:
+          - BUILD_SHARED_LIBS: ON
+            STATIC_RUNTIME: ON
+          - BUILD_CUDA_MODULE: ON
+            CONFIG: Debug
+    env:
+      BUILD_PYTORCH_OPS: ${{ ( matrix.BUILD_CUDA_MODULE == 'ON' || matrix.CONFIG == 'Debug' ) && 'OFF' || 'ON' }}
+      PIP_VER: "24.3.1"
+      CUDA_VERSION: "12.6.0"
+      SRC_DIR: "D:\\a\\open3d\\open3d"
+      BUILD_DIR: "C:\\Open3D\\build"
+      INSTALL_DIR: "C:\\Program Files\\Open3D"
+      NPROC: 6
+      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+    steps:
+      - name: Disk space used
+        run: Get-PSDrive
+
+      - name: Install CUDA
+        if: ${{ matrix.BUILD_CUDA_MODULE == 'ON' }}
+        run: |
+          $CUDA_VER_FULL = "${{ env.CUDA_VERSION }}"
+          $CUDA_VER_ARR = $CUDA_VER_FULL.Split(".")
+          $CUDA_VER = "$($CUDA_VER_ARR[0]).$($CUDA_VER_ARR[1])"
+          $CUDA_VER_ID = "$($CUDA_VER_ARR[0])_$($CUDA_VER_ARR[1])"
+          if ( $CUDA_VER_ARR[0] -ge 11 ) {
+            $CUDA_URL = "http://developer.download.nvidia.com/compute/cuda/$CUDA_VER_FULL/network_installers/cuda_$($CUDA_VER_FULL)_windows_network.exe"
+          } else {
+            $CUDA_URL = "http://developer.download.nvidia.com/compute/cuda/$CUDA_VER/Prod/network_installers/cuda_$($CUDA_VER_FULL)_win10_network.exe"
+          }
+          $CUDA_INSTALL_ARGS = "-s"
+          $CUDA_PACKAGES = "nvcc", "visual_studio_integration", "cublas", "cublas_dev", "cudart", "cusolver", "cusolver_dev", "cusparse", "cusparse_dev", "npp", "npp_dev", "nvtx", "thrust"
+          $CUDA_PACKAGES.ForEach({ $CUDA_INSTALL_ARGS += " $($_)_$($CUDA_VER)" })
+          echo "Downloading CUDA installer from $CUDA_URL"
+          Invoke-WebRequest $CUDA_URL -OutFile cuda.exe
+          echo "Installing CUDA..."
+          Start-Process -Wait -FilePath .\cuda.exe -ArgumentList "$CUDA_INSTALL_ARGS"
+          if ( !$? ) { exit 1 }
+          $CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v$CUDA_VER"
+          echo "CUDA_PATH=$CUDA_PATH" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+          echo "CUDA_PATH_V$CUDA_VER_ID=$CUDA_PATH" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+          echo "$CUDA_PATH\bin" | Out-File -FilePath $Env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install glslang via vcpkg
+        run: |
+          vcpkg install glslang[tools]:x64-windows
+          $glslangBinPath = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-windows\tools\glslang"
+          $glslangBinPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Set up Python version
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Checkout Open3D-ML
+        uses: actions/checkout@v4
+        with:
+          repository: isl-org/Open3D-ML
+          ref: main
+          path: open3d_ml
+
+      - name: Install PyTorch requirements
+        run: |
+          if ( '${{ matrix.BUILD_CUDA_MODULE }}' -eq 'ON' ) {
+            python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+          } else {
+            python -m pip install -r open3d_ml/requirements-torch.txt
+          }
+
+      - name: Config
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -Path '${{ env.BUILD_DIR }}' -ItemType Directory
+          cd '${{ env.BUILD_DIR }}'
+          if ($Env:DEVELOPER_BUILD -ne "OFF") { $Env:DEVELOPER_BUILD = "ON" }
+          cmake --version
+          cmake -G "Visual Studio 17 2022" -A x64 `
+            -DDEVELOPER_BUILD=$Env:DEVELOPER_BUILD `
+            -DBUILD_EXAMPLES=OFF `
+            -DBUILD_PYTHON_MODULE=OFF `
+            -DCMAKE_INSTALL_PREFIX="$env:INSTALL_DIR" `
+            -DOPEN3D_THIRD_PARTY_DOWNLOAD_DIR="$env:BUILD_DIR/3rdparty_downloads" `
+            -DBUILD_SHARED_LIBS=${{ matrix.BUILD_SHARED_LIBS }} `
+            -DSTATIC_WINDOWS_RUNTIME=${{ matrix.STATIC_RUNTIME }} `
+            -DBUILD_COMMON_ISPC_ISAS=ON `
+            -DBUILD_LIBREALSENSE=ON `
+            -DBUILD_UNIT_TESTS=ON `
+            -DBUILD_CUDA_MODULE=${{ matrix.BUILD_CUDA_MODULE }} `
+            -DBUILD_PYTORCH_OPS=${{ env.BUILD_PYTORCH_OPS }} `
+            ${{ env.SRC_DIR }}
+
+      - name: Build
+        working-directory: ${{ env.BUILD_DIR }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --build . --parallel ${{ env.NPROC }} --config ${{ matrix.CONFIG }} `
+            --target build-examples-iteratively
+          cmake --build . --parallel ${{ env.NPROC }} --config ${{ matrix.CONFIG }} `
+            --target INSTALL
+
+      - name: Package
+        working-directory: ${{ env.BUILD_DIR }}
+        if: ${{ matrix.BUILD_SHARED_LIBS == 'ON' && matrix.BUILD_CUDA_MODULE == 'OFF' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --build . --parallel ${{ env.NPROC }} --config ${{ matrix.CONFIG }} `
+            --target package
+          if ("${{ matrix.CONFIG }}" -eq "Debug") {
+              Get-ChildItem package/open3d-devel-*.zip | Rename-Item -NewName `
+                  {$_.name -Replace '.zip','-dbg.zip'}
+          }
+          $DEVEL_PKG_NAME=(Get-ChildItem package/open3d-devel-*.zip).Name
+          echo "DEVEL_PKG_NAME=$DEVEL_PKG_NAME" | Out-File -FilePath `
+            $Env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Generate package attestation
+        if: ${{ matrix.BUILD_SHARED_LIBS == 'ON' && matrix.BUILD_CUDA_MODULE == 'OFF' }}
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.BUILD_DIR }}/package/${{ env.DEVEL_PKG_NAME }}
+
+      - name: Upload Package
+        if: ${{ matrix.BUILD_SHARED_LIBS == 'ON' && matrix.BUILD_CUDA_MODULE == 'OFF' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DEVEL_PKG_NAME }}
+          path: ${{ env.BUILD_DIR }}/package/${{ env.DEVEL_PKG_NAME }}
+          if-no-files-found: error
+
+      - name: Update devel release with package
+        if: ${{ github.ref == 'refs/heads/main' && matrix.BUILD_SHARED_LIBS == 'ON' && matrix.BUILD_CUDA_MODULE == 'OFF' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        working-directory: ${{ env.BUILD_DIR }}
+        run: |
+          $GITHUB_WORKSPACE/.github/workflows/update_release.sh package/${{ env.DEVEL_PKG_NAME }}
+
+      - name: Viewer App
+        working-directory: ${{ env.BUILD_DIR }}
+        if: ${{ matrix.BUILD_SHARED_LIBS == 'OFF' && matrix.STATIC_RUNTIME == 'ON' && matrix.BUILD_CUDA_MODULE == 'OFF' && matrix.CONFIG == 'Release' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --build . --parallel ${{ env.NPROC }} --config ${{ matrix.CONFIG }} `
+            --target Open3DViewer
+          cmake --build . --parallel ${{ env.NPROC }} --config ${{ matrix.CONFIG }} `
+            --target INSTALL
+          $cmakeCachePath = Join-Path $env:BUILD_DIR "CMakeCache.txt"
+          $Env:OPEN3D_VERSION_FULL = (Select-String -Path $cmakeCachePath -Pattern "OPEN3D_VERSION_FULL").Line.Split('=')[1]
+          $open3dAppPath = Join-Path $env:INSTALL_DIR "bin\Open3D"
+          Compress-Archive -Path $open3dAppPath -DestinationPath `
+            "$Env:GITHUB_WORKSPACE/open3d-$Env:OPEN3D_VERSION_FULL-app-windows-amd64.zip"
+          echo "VIEWER_ZIP_NAME=open3d-$Env:OPEN3D_VERSION_FULL-app-windows-amd64.zip" | Out-File -FilePath `
+            $Env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Generate viewer attestation
+        if: ${{ matrix.BUILD_SHARED_LIBS == 'OFF' && matrix.STATIC_RUNTIME == 'ON' && matrix.BUILD_CUDA_MODULE == 'OFF' && matrix.CONFIG == 'Release' }}
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ github.workspace }}/${{ env.VIEWER_ZIP_NAME }}
+
+      - name: Upload Viewer
+        if: ${{ matrix.BUILD_SHARED_LIBS == 'OFF' && matrix.STATIC_RUNTIME == 'ON' && matrix.BUILD_CUDA_MODULE == 'OFF' && matrix.CONFIG == 'Release' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: open3d-app-windows-amd64
+          path: ${{ github.workspace }}/${{ env.VIEWER_ZIP_NAME }}
+          if-no-files-found: error
+
+      - name: Update devel release with viewer
+        if: ${{ github.ref == 'refs/heads/main' && matrix.BUILD_SHARED_LIBS == 'OFF' && matrix.STATIC_RUNTIME == 'ON' && matrix.BUILD_CUDA_MODULE == 'OFF' && matrix.CONFIG == 'Release' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash .github/workflows/update_release.sh "${{ env.VIEWER_ZIP_NAME }}"
+
+      - name: Run C++ unit tests
+        if: ${{ matrix.BUILD_CUDA_MODULE == 'OFF' }}
+        working-directory: ${{ env.BUILD_DIR }}
+        run: |
+          echo "Add --gtest_random_seed=SEED to the test command to repeat this test sequence."
+          .\bin\${{ matrix.CONFIG }}\tests.exe --gtest_shuffle --gtest_filter=-*ReduceSum64bit2DCase0*:*ReduceSum64bit2DCase3*
+
+      - name: Linking to Open3D
+        working-directory: ${{ env.SRC_DIR }}/examples/cmake/open3d-cmake-find-package
+        run: |
+          $ErrorActionPreference = 'Stop'
+          mkdir build
+          cd build
+          cmake -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_INSTALL_PREFIX="$env:INSTALL_DIR" `
+            -DSTATIC_WINDOWS_RUNTIME=${{ matrix.STATIC_RUNTIME }} `
+            ..
+          cmake --build . --config ${{ matrix.CONFIG }}
+          if ( '${{ matrix.BUILD_CUDA_MODULE }}' -eq 'OFF' ) {
+            .\${{ matrix.CONFIG }}\Draw.exe --skip-for-unit-test
+          }
+          Remove-Item -LiteralPath $env:INSTALL_DIR -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Compress build directory
+        working-directory: "C:/"
+        if: ${{ matrix.BUILD_SHARED_LIBS == 'OFF' && matrix.STATIC_RUNTIME == 'ON' && matrix.BUILD_CUDA_MODULE == 'OFF' && matrix.CONFIG == 'Release' }}
+        run: |
+           Compress-Archive -Path "${{ env.BUILD_DIR }}" -DestinationPath "${{ env.SRC_DIR }}/open3d_build.zip"
+
+      - name: Upload build artifact
+        if: ${{ matrix.BUILD_SHARED_LIBS == 'OFF' && matrix.STATIC_RUNTIME == 'ON' && matrix.BUILD_CUDA_MODULE == 'OFF' && matrix.CONFIG == 'Release' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: open3d-build-windows
+          path: ${{ env.SRC_DIR }}/open3d_build.zip
+          retention-days: 1
+      - name: Disk space used
+        run: Get-PSDrive
+
+  windows-build-wheel:
+    name: Windows Build Wheel
+    needs: [windows-build-lib]
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        is_main:
+          - ${{ github.ref == 'refs/heads/main' }}
+        exclude:
+          - is_main: false
+            python_version: '3.10'
+          - is_main: false
+            python_version: '3.11'
+          - is_main: false
+            python_version: '3.12'
+          - is_main: false
+            python_version: '3.13'
+    env:
+      BUILD_PYTORCH_OPS: 'ON'
+      PIP_VER: "24.3.1"
+      SRC_DIR: "D:\\a\\open3d\\open3d"
+      BUILD_DIR: "C:\\Open3D\\build_wheel"
+      INSTALL_DIR: "C:\\Open3D\\install"
+      NPROC: 6
+      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+    steps:
+      - name: Install glslang via vcpkg
+        run: |
+          vcpkg install glslang[tools]:x64-windows
+          $glslangBinPath = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-windows\tools\glslang"
+          $glslangBinPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Checkout Open3D-ML
+        uses: actions/checkout@v4
+        with:
+          repository: isl-org/Open3D-ML
+          ref: main
+          path: open3d_ml
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python_version }}
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: open3d-build-windows
+          path: ${{ env.SRC_DIR }}
+
+      - name: Unpack build artifact
+        run: |
+          New-Item -Path ${{ env.BUILD_DIR }} -ItemType Directory -Force
+          Expand-Archive -Path ${{ env.SRC_DIR }}\open3d_build.zip -DestinationPath "C:\Open3D\" -Force
+
+      - name: Install Python dependencies
+        working-directory: ${{ env.SRC_DIR }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install -U pip==${{ env.PIP_VER }}
+          python -m pip install maturin==1.7.8
+          python -m pip install -U -r python/requirements.txt `
+            -r python/requirements_build.txt `
+            -r python/requirements_jupyter_build.txt
+          if ('${{ env.BUILD_PYTORCH_OPS }}' -eq 'ON') {
+            python -m pip install -U -r open3d_ml/requirements-torch.txt
+          }
+
+      - name: Config
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cd ${{ env.BUILD_DIR }}
+          if ($Env:DEVELOPER_BUILD -ne "OFF") { $Env:DEVELOPER_BUILD = "ON" }
+          cmake -G "Visual Studio 17 2022" -A x64 `
+            -U "Python3*" -U "PYTHON_*" -U "Pytorch*" -U "Torch*" `
+            -DPython3_EXECUTABLE="$((Get-Command python).Source)" `
+            -DCMAKE_INSTALL_PREFIX="$env:INSTALL_DIR" `
+            -DDEVELOPER_BUILD="$Env:DEVELOPER_BUILD" `
+            -DOPEN3D_THIRD_PARTY_DOWNLOAD_DIR="$env:BUILD_DIR/3rdparty_downloads" `
+            -DBUILD_SHARED_LIBS=OFF `
+            -DSTATIC_WINDOWS_RUNTIME=ON `
+            -DBUILD_COMMON_ISPC_ISAS=ON `
+            -DBUILD_PYTHON_MODULE=ON `
+            -DBUILD_AZURE_KINECT=ON `
+            -DBUILD_LIBREALSENSE=ON `
+            -DBUILD_WEBRTC=ON `
+            -DBUILD_JUPYTER_EXTENSION=ON `
+            -DBUILD_PYTORCH_OPS=${{ env.BUILD_PYTORCH_OPS }} `
+            ${{ env.SRC_DIR }}
+
+      - name: Build Python package
+        working-directory: ${{ env.BUILD_DIR }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --build . --parallel ${{ env.NPROC }} --config Release --target pip-package
+          $PIP_PKG_NAME=(Get-ChildItem lib/python_package/pip_package/open3d*.whl).Name
+          echo "PIP_PKG_NAME=$PIP_PKG_NAME"  | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Generate wheel attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.BUILD_DIR }}/lib/python_package/pip_package/${{ env.PIP_PKG_NAME }}
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PIP_PKG_NAME }}
+          path: ${{ env.BUILD_DIR }}/lib/python_package/pip_package/${{ env.PIP_PKG_NAME }}
+          if-no-files-found: error
+
+      - name: Update devel release with wheel
+        if: ${{ github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        working-directory: ${{ env.BUILD_DIR }}
+        run: |
+          $GITHUB_WORKSPACE/.github/workflows/update_release.sh lib/python_package/pip_package/${{ env.PIP_PKG_NAME }}
+
+  windows-test-wheel:
+    name: Windows Test Wheel
+    permissions:
+      contents: read
+    runs-on: windows-2022
+    needs: [windows-build-wheel]
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        is_main:
+          - ${{ github.ref == 'refs/heads/main' }}
+        exclude:
+          - is_main: false
+            python_version: '3.10'
+          - is_main: false
+            python_version: '3.11'
+          - is_main: false
+            python_version: '3.12'
+          - is_main: false
+            python_version: '3.13'
+    env:
+      BUILD_PYTORCH_OPS: 'ON'
+      PIP_VER: "24.3.1"
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Checkout Open3D-ML
+        uses: actions/checkout@v4
+        with:
+          repository: isl-org/Open3D-ML
+          ref: main
+          path: open3d_ml
+
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: open3d-*win*.whl
+          merge-multiple: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python_version }}
+
+      - name: Test Python package
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -V
+          python -m venv open3d_test_venv
+          open3d_test_venv\Scripts\Activate.ps1
+          python -m pip install -U pip==${{ env.PIP_VER }}
+          python -m pip install -U -r python/requirements_build.txt `
+            -r python/requirements_test.txt
+          if ('${{ env.BUILD_PYTORCH_OPS }}' -eq 'ON') {
+            python -m pip install -U -r open3d_ml/requirements-torch.txt
+          }
+          $py_tag=(python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
+          if (Test-Path -Path "pip_package") {
+            $PIP_PKG_NAME=(Get-ChildItem pip_package\open3d*-$py_tag-*.whl).Name
+          } else {
+            $PIP_PKG_NAME=(Get-ChildItem open3d*-$py_tag-*.whl).Name
+          }
+          echo "Installing Open3D wheel $PIP_PKG_NAME in virtual environment..."
+          python -m pip install "$PIP_PKG_NAME"
+          python -c "import open3d; print('Imported:', open3d)"
+          python -c "import open3d; print('CUDA enabled: ', open3d.core.cuda.is_available())"
+          deactivate
+
+      - name: Run Python unit tests
+        run: |
+          $ErrorActionPreference = 'Stop'
+          open3d_test_venv\Scripts\Activate.ps1
+          echo "Running Open3D python tests..."
+          echo "Add --randomly-seed=SEED to the test command to reproduce test order."
+          $pytest_args = @("python/test/")
+          if ('${{ env.BUILD_PYTORCH_OPS }}' -eq 'OFF') {
+            echo "Testing ML Ops disabled"
+            $pytest_args += "--ignore=python/test/ml_ops/"
+          }
+          python -m pytest @pytest_args
+          deactivate
+
+  # ============================================================
+  # MACOS ARM64 BUILD
+  # ============================================================
+  macos-build-lib:
+    name: macOS Build Lib
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        CONFIG: [ON, OFF]
+    env:
+      BUILD_SHARED_LIBS: ${{ matrix.CONFIG }}
+      BUILD_TENSORFLOW_OPS: 'ON'
+      BUILD_PYTORCH_OPS: 'ON'
+      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      BUILD_CUDA_MODULE: OFF
+      NPROC: 4
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Setup cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-${{ runner.arch }}-ccache-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-ccache
+      - name: Set up Python version
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          brew install ccache glslang spirv-cross gcc
+          ln -s $(brew --prefix gcc)/bin/gfortran-* /usr/local/bin/gfortran
+          ccache -M 2G
+      - name: Config and build
+        run: |
+          PATH=/usr/local/var/homebrew/linked/ccache/libexec:$PATH
+          ccache -s
+          export BUILD_PYTHON_MODULE=OFF
+          ./util/run_ci.sh
+          DEVEL_PKG_NAME="$(basename build/package/open3d-devel-*.tar.xz)"
+          echo "DEVEL_PKG_NAME=$DEVEL_PKG_NAME" >> $GITHUB_ENV
+          tar -caf build.tar.xz build
+      - name: Upload build artifact
+        if: ${{ matrix.CONFIG == 'OFF' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: open3d-build-macos-14
+          path: build.tar.xz
+          retention-days: 1
+      - name: Build Open3D viewer app
+        if: ${{ env.BUILD_SHARED_LIBS == 'OFF' }}
+        run: |
+          OPEN3D_VERSION_FULL="$(grep -F OPEN3D_VERSION_FULL build/CMakeCache.txt | cut -f2 -d'=')"
+          PATH=/usr/local/var/homebrew/linked/ccache/libexec:$PATH
+          pushd build
+          make -j${NPROC} Open3DViewer
+          pushd bin
+          zip -rv "open3d-${OPEN3D_VERSION_FULL}-app-macosx-10_15-${{ runner.arch }}.zip" Open3D.app
+          ccache -s
+      - name: Generate package attestation
+        if: ${{ env.BUILD_SHARED_LIBS == 'ON' }}
+        uses: actions/attest@v4
+        with:
+          subject-path: build/package/${{ env.DEVEL_PKG_NAME }}
+      - name: Upload package
+        if: ${{ env.BUILD_SHARED_LIBS == 'ON' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DEVEL_PKG_NAME }}
+          path: build/package/${{ env.DEVEL_PKG_NAME }}
+          if-no-files-found: error
+      - name: Generate viewer attestation
+        if: ${{ env.BUILD_SHARED_LIBS == 'OFF' }}
+        uses: actions/attest@v4
+        with:
+          subject-path: build/bin/open3d-*-app-macosx-10_15-${{ runner.arch }}.zip
+      - name: Upload Open3D viewer app
+        uses: actions/upload-artifact@v4
+        if: ${{ env.BUILD_SHARED_LIBS == 'OFF' }}
+        with:
+          name: open3d-app-macosx-10_15-${{ runner.arch}}
+          path: build/bin/open3d-*-app-macosx-10_15-${{ runner.arch }}.zip
+          if-no-files-found: error
+      - name: Update devel release
+        if: ${{ github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [[ "${{ env.BUILD_SHARED_LIBS }}" == 'ON' ]]; then
+            .github/workflows/update_release.sh build/package/${{ env.DEVEL_PKG_NAME }}
+          else
+            .github/workflows/update_release.sh build/bin/open3d-*-app-macosx-10_15-${{ runner.arch }}.zip
+          fi
+
+  macos-build-wheel:
+    name: macOS Build Wheel
+    needs: [macos-build-lib]
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        is_main:
+          - ${{ github.ref == 'refs/heads/main' }}
+        exclude:
+          - is_main: false
+            python_version: '3.10'
+          - is_main: false
+            python_version: '3.11'
+          - is_main: false
+            python_version: '3.12'
+          - is_main: false
+            python_version: '3.13'
+    env:
+      BUILD_TENSORFLOW_OPS: ${{ matrix.python_version >= '3.14' && 'OFF' || 'ON' }}
+      BUILD_PYTORCH_OPS: 'ON'
+      OPEN3D_ML_ROOT: ${{ github.workspace }}/Open3D-ML
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Checkout Open3D-ML source code
+        uses: actions/checkout@v4
+        with:
+          repository: isl-org/Open3D-ML
+          ref: main
+          path: ${{ env.OPEN3D_ML_ROOT }}
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: open3d-build-macos-14
+      - name: Unpack build artifact
+        run: tar -xf build.tar.xz
+      - name: Setup cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-${{ runner.arch }}-ccache-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-ccache
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python_version }}
+      - name: Install dependencies
+        run: |
+          echo "Using python: $(which python)"
+          python --version
+          echo -n "Using pip: $(which pip)"
+          python -m pip --version
+          echo "Using cmake: $(which cmake)"
+          cmake --version
+          source util/ci_utils.sh
+          install_python_dependencies
+          brew install ccache glslang spirv-cross gcc
+          ccache -M 2G
+          ln -s $(brew --prefix gcc)/bin/gfortran-* /usr/local/bin/gfortran
+      - name: Config and build wheel
+        run: |
+          PATH=/usr/local/var/homebrew/linked/ccache/libexec:$PATH
+          ccache -s
+          source util/ci_utils.sh
+          build_pip_package
+          ccache -s
+          PIP_PKG_NAME="$(basename build/lib/python_package/pip_package/open3d*.whl)"
+          echo "PIP_PKG_NAME=$PIP_PKG_NAME" >> $GITHUB_ENV
+      - name: Generate wheel attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: build/lib/python_package/pip_package/${{ env.PIP_PKG_NAME }}
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PIP_PKG_NAME }}
+          path: build/lib/python_package/pip_package/${{ env.PIP_PKG_NAME }}
+          if-no-files-found: error
+      - name: Update devel release
+        if: ${{ github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .github/workflows/update_release.sh build/lib/python_package/pip_package/${{ env.PIP_PKG_NAME }}
+
+  macos-test-wheel:
+    name: macOS Test Wheel
+    permissions:
+      contents: read
+    runs-on: macos-14
+    needs: [macos-build-wheel]
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        is_main:
+          - ${{ github.ref == 'refs/heads/main' }}
+        exclude:
+          - is_main: false
+            python_version: '3.10'
+          - is_main: false
+            python_version: '3.11'
+          - is_main: false
+            python_version: '3.12'
+          - is_main: false
+            python_version: '3.13'
+    env:
+      BUILD_TENSORFLOW_OPS: ${{ matrix.python_version >= '3.14' && 'OFF' || 'ON' }}
+      BUILD_PYTORCH_OPS: 'ON'
+      OPEN3D_ML_ROOT: ${{ github.workspace }}/Open3D-ML
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Checkout Open3D-ML source code
+        uses: actions/checkout@v4
+        with:
+          repository: isl-org/Open3D-ML
+          ref: main
+          path: ${{ env.OPEN3D_ML_ROOT }}
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: open3d-*macosx*.whl
+          merge-multiple: true
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python_version }}
+      - name: Test Python package
+        run: |
+          python -V
+          source util/ci_utils.sh
+          pi_tag=$(python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
+          test_wheel open3d*-"$pi_tag"-*_$(uname -m).whl
+      - name: Run Python unit tests
+        run: |
+          source util/ci_utils.sh
+          echo "Running Open3D python tests..."
+          run_python_tests
+
+  # ============================================================
+  # DOCUMENTATION BUILD
+  # ============================================================
+  build-docs:
+    name: Build Documentation
+    needs: [linux-cpu-build-lib]
+    if: ${{ github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    runs-on: ubuntu-latest
+    env:
+      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+    steps:
+      - name: Checkout Open3D source code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: open3d-wheel-linux-x86_64-cpu
+      - name: Checkout Open3D-ML
+        run: git clone --depth 1 https://github.com/isl-org/Open3D-ML.git -b main /tmp/Open3D-ML
+      - name: Install doc dependencies
+        run: |
+          source util/ci_utils.sh
+          install_docs_dependencies /tmp/Open3D-ML
+      - name: Install Open3D wheel
+        run: python -m pip install open3d*.whl
+      - name: Build docs
+        run: |
+          source util/ci_utils.sh
+          build_docs "${DEVELOPER_BUILD}"
+          tar -C docs/_out -czvf open3d-${GITHUB_SHA}-docs.tar.gz html
+      - name: Generate docs attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ github.workspace }}/open3d-${{ github.sha }}-docs.tar.gz
+      - name: Upload docs
+        uses: actions/upload-artifact@v4
+        with:
+          name: open3d-${{ github.sha }}-docs
+          path: open3d-${{ github.sha }}-docs.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+      - name: Update devel release
+        if: ${{ github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .github/workflows/update_release.sh open3d-${{ github.sha }}-docs.tar.gz
+
+  # ============================================================
+  # WHEEL UPLOAD TO PYPI (Manual trigger only)
+  # ============================================================
+  upload-wheels-to-pypi:
+    name: Upload Wheels to PyPI
+    if: ${{ github.ref == 'refs/heads/main' && env.UPLOAD_WHEELS == 'true' }}
+    needs:
+      - linux-cuda-build-wheel
+      - linux-cpu-build-lib
+      - linux-arm64-build-wheel
+      - linux-sycl-build-wheel
+      - windows-build-wheel
+      - macos-build-wheel
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: open3d-*.whl
+          merge-multiple: true
+          path: dist
+      - name: List wheels
+        run: ls -la dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          repository-url: https://upload.pypi.org/legacy/
