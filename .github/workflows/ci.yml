@@ -93,6 +93,248 @@ jobs:
         run: python util/check_style.py
 
   # ============================================================
+  # VTK PACKAGES
+  # ============================================================
+  vtk-packages:
+    name: VTK Packages
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name_suffix: linux
+          - os: windows-2022
+            name_suffix: windows
+          - os: macos-14
+            name_suffix: macos
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: CMake configure (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir build
+          cd build
+          cmake ../3rdparty/vtk
+      - name: Build (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          cd build
+          make -j$(nproc)
+          cmake -E sha256sum vtk*.tar.gz > checksum_${{ matrix.name_suffix }}.txt
+      - name: Upload artifacts (Linux/macOS)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vtk_${{ matrix.name_suffix }}
+          path: |
+            build/vtk*.tar.gz
+            build/checksum*.txt
+          if-no-files-found: error
+
+      - name: Disk space used (Windows)
+        if: runner.os == 'Windows'
+        run: Get-PSDrive
+      - name: Config (Windows)
+        if: runner.os == 'Windows'
+        env:
+          SRC_DIR: "D:\\a\\open3d\\open3d"
+          BUILD_DIR: "C:\\Open3D\\build"
+          NPROC: 6
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -Path ${{ env.BUILD_DIR }} -ItemType Directory -Force
+          cd ${{ env.BUILD_DIR }}
+          cmake -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_INSTALL_PREFIX="C:\Program Files\Open3D" `
+            -DSTATIC_WINDOWS_RUNTIME=ON `
+            "${{ env.SRC_DIR }}\3rdparty\vtk"
+          ls
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        working-directory: C:\Open3D\build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --build . --parallel ${{ env.NPROC }} --config Release
+          ls
+          cmake --build . --parallel ${{ env.NPROC }} --config Debug
+          ls
+          cmake -E sha256sum (get-item vtk*.tar.gz).Name > checksum_win.txt
+      - name: Upload package (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vtk_windows
+          path: |
+            C:\Open3D\build\vtk*.tar.gz
+            C:\Open3D\build\checksum*.txt
+          if-no-files-found: error
+
+  # ============================================================
+  # WEBRTC PACKAGES
+  # ============================================================
+  webrtc-packages:
+    name: WebRTC Packages
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            suffix: linux_cxx-abi-1
+          - os: macos-14
+            suffix: macos_arm64
+          - os: windows-2022
+            config: Release
+            static_runtime: ON
+            tag: Release_mt
+          - os: windows-2022
+            config: Release
+            static_runtime: OFF
+            tag: Release_md
+          - os: windows-2022
+            config: Debug
+            static_runtime: ON
+            tag: Debug_mt
+          - os: windows-2022
+            config: Debug
+            static_runtime: OFF
+            tag: Debug_md
+    env:
+      WEBRTC_COMMIT: e8b4d4c5952a8fb7b35c2a6cba4e8c3de2ea2e1e
+      DEPOT_TOOLS_COMMIT: 10eda50a3fd9c34ad8d31ec74e5f4eb5823d60f6
+      WEBRTC_WORK_ROOT: ${{ github.workspace }}/..
+      GCLIENT_JOBS: 8
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies (Ubuntu)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          source 3rdparty/webrtc/webrtc_build.sh
+          install_dependencies_ubuntu
+
+      - name: Download WebRTC sources
+        run: |
+          source 3rdparty/webrtc/webrtc_build.sh
+          download_webrtc_sources
+
+      - name: Build WebRTC (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          source 3rdparty/webrtc/webrtc_build.sh
+          build_webrtc
+
+      - name: Upload WebRTC (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: webrtc_${{ matrix.suffix }}
+          path: |
+            webrtc_*.tar.gz
+            checksum_webrtc_*.tar.gz
+          if-no-files-found: error
+
+      # Windows-specific steps
+      - name: Prepare work directory (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WORK_DIR: 'C:\WebRTC'
+          OPEN3D_DIR: ${{ github.workspace }}
+          WEBRTC_WORK_ROOT: 'C:\WebRTC'
+          DEPOT_TOOLS_UPDATE: 0
+          DEPOT_TOOLS_WIN_TOOLCHAIN: 0
+        run: |
+          Get-PSDrive
+          New-Item -ItemType Directory -Force -Path $env:WORK_DIR
+
+      - name: Setup PATH for Visual Studio (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Download WebRTC sources (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          OPEN3D_DIR: ${{ github.workspace }}
+        run: |
+          source "$OPEN3D_DIR/3rdparty/webrtc/webrtc_build.sh"
+          download_webrtc_sources
+
+      - name: Patch WebRTC (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: C:\WebRTC
+        env:
+          OPEN3D_DIR: ${{ github.workspace }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Copy-Item "$env:OPEN3D_DIR/3rdparty/webrtc/CMakeLists.txt" webrtc/
+          Copy-Item "$env:OPEN3D_DIR/3rdparty/webrtc/webrtc_common.cmake" webrtc/
+          bash "$env:OPEN3D_DIR/3rdparty/webrtc/apply_webrtc_patches.sh" `
+            "$env:OPEN3D_DIR" "$env:WORK_DIR/webrtc/src"
+
+      - name: Build and package WebRTC (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: C:\WebRTC
+        env:
+          BUILD_CONFIG: ${{ matrix.config }}
+          STATIC_RT: ${{ matrix.static_runtime }}
+          WIN_TAG: ${{ matrix.tag }}
+          OPEN3D_DIR: ${{ github.workspace }}
+          WORK_DIR: 'C:\WebRTC'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ninjaExe = (Get-Command ninja.exe -ErrorAction Stop).Source
+          $env:Path = (Get-Item depot_tools).FullName + ';' + $env:Path
+          $installRoot = Join-Path $env:WORK_DIR "webrtc_pkg"
+          if (Test-Path $installRoot) { Remove-Item -Recurse -Force $installRoot }
+          New-Item -ItemType Directory -Force -Path webrtc/build | Out-Null
+          Push-Location webrtc/build
+          $debugFlag = if ($env:BUILD_CONFIG -eq 'Debug') { 'ON' } else { 'OFF' }
+          cmake -G Ninja `
+            -D CMAKE_MAKE_PROGRAM="$ninjaExe" `
+            -D CMAKE_BUILD_TYPE=$env:BUILD_CONFIG `
+            -D WEBRTC_IS_DEBUG=$debugFlag `
+            -D WEBRTC_STATIC_MSVC_RUNTIME=$env:STATIC_RT `
+            -D CMAKE_INSTALL_PREFIX=$installRoot `
+            ..
+          ninja install
+          Pop-Location
+          $short = (git -C webrtc/src rev-parse --short=7 HEAD)
+          $zip = "webrtc_${short}_win_$env:WIN_TAG.zip"
+          Push-Location $installRoot
+          cmake -E tar cvf (Join-Path $env:OPEN3D_DIR $zip) --format=zip .
+          Pop-Location
+          cmake -E sha256sum (Join-Path $env:OPEN3D_DIR $zip) | Tee-Object -FilePath (Join-Path $env:OPEN3D_DIR "checksum_$zip")
+
+      - name: Upload WebRTC (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: webrtc_win_${{ matrix.tag }}
+          path: |
+            webrtc_*_win_*.zip
+            checksum_webrtc_*_win_*.zip
+          if-no-files-found: error
+
+  # ============================================================
   # LINUX x86_64 CUDA BUILD
   # ============================================================
   linux-cuda-build-lib:
@@ -1492,3 +1734,35 @@ jobs:
         with:
           packages-dir: dist/
           repository-url: https://upload.pypi.org/legacy/
+
+  # ============================================================
+  # CLEAN GCLOUD PROFILES (Manual trigger only)
+  # ============================================================
+  clean-gcloud-profiles:
+    name: Clean GCloud Profiles
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GCE_GPU_CI_SA: ${{ secrets.GCE_GPU_CI_SA }}
+      GCE_CLI_GHA_VERSION: '416.0.0'
+    steps:
+      - name: GCloud CLI auth
+        uses: 'google-github-actions/auth@v2'
+        with:
+          project_id: ${{ secrets.GCE_PROJECT }}
+          credentials_json: '${{ secrets.GCE_SA_KEY_GPU_CI }}'
+      - name: GCloud CLI setup
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          version: ${{ env.GCE_CLI_GHA_VERSION }}
+          project_id: ${{ secrets.GCE_PROJECT }}
+      - name: Delete GCloud login profiles manually
+        run: |
+          gcloud compute os-login describe-profile
+          for i in $(gcloud compute os-login ssh-keys list | grep -v FINGERPRINT); do
+              echo "Removing ssh key"
+              gcloud compute os-login ssh-keys remove --key $i || true
+          done
+          gcloud compute os-login describe-profile
