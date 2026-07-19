@@ -339,7 +339,7 @@ jobs:
   # ============================================================
   linux-cuda-build-lib:
     name: Linux CUDA Build Lib
-    if: ${{ env.BUILD_CUDA == 'true' }}
+    if: ${{ inputs.build_cuda == 'true' }}
     runs-on: ubuntu-latest
     env:
       BUILD_CUDA_MODULE: ON
@@ -347,7 +347,7 @@ jobs:
       BUILD_PYTORCH_OPS: OFF
       BUILD_TENSORFLOW_OPS: OFF
       OPEN3D_CPU_RENDERING: true
-      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      DEVELOPER_BUILD: ${{ inputs.developer_build }}
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
@@ -377,7 +377,7 @@ jobs:
 
   linux-cuda-test-cpp:
     name: Linux CUDA Test C++
-    if: ${{ env.BUILD_CUDA == 'true' }}
+    if: ${{ inputs.build_cuda == 'true' }}
     runs-on: ubuntu-22.04
     needs: [linux-cuda-build-lib]
     steps:
@@ -397,7 +397,7 @@ jobs:
 
   linux-cuda-build-wheel:
     name: Linux CUDA Build Wheel
-    if: ${{ env.BUILD_CUDA == 'true' }}
+    if: ${{ inputs.build_cuda == 'true' }}
     needs: [linux-cuda-build-lib]
     runs-on: ubuntu-latest
     strategy:
@@ -417,7 +417,7 @@ jobs:
             python_version: '3.13'
     env:
       PYTHON_VERSION: ${{ matrix.python_version }}
-      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      DEVELOPER_BUILD: ${{ inputs.developer_build }}
       BUILD_PYTORCH_OPS: ON
       BUILD_TENSORFLOW_OPS: ${{ matrix.python_version >= '3.14' && 'OFF' || 'ON' }}
       CCACHE_TAR_NAME: open3d-ubuntu-2204-cuda-ci-ccache
@@ -441,7 +441,7 @@ jobs:
         run: |
           export OPEN3D_ARTIFACTS_DIR="${GITHUB_WORKSPACE}/open3d-artifacts"
           PY_VER="${{ env.PYTHON_VERSION }}"
-          DEV_BUILD="${{ env.DEVELOPER_BUILD }}"
+          DEV_BUILD="${{ inputs.developer_build }}"
           if [ "$PY_VER" = "3.10" ] && [ "$DEV_BUILD" = "ON" ]; then
             docker/docker_build.sh cuda_wheel_py310_dev
           elif [ "$PY_VER" = "3.11" ] && [ "$DEV_BUILD" = "ON" ]; then
@@ -492,7 +492,7 @@ jobs:
 
   linux-cuda-test-wheel:
     name: Linux CUDA Test Wheel
-    if: ${{ env.BUILD_CUDA == 'true' }}
+    if: ${{ inputs.build_cuda == 'true' }}
     needs: [linux-cuda-build-wheel]
     runs-on: ubuntu-latest
     strategy:
@@ -549,7 +549,7 @@ jobs:
   # ============================================================
   linux-cpu-build-lib:
     name: Linux CPU Build Lib
-    if: ${{ env.BUILD_CPU == 'true' }}
+    if: ${{ inputs.build_cpu == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -559,7 +559,7 @@ jobs:
       BUILD_SHARED_LIBS: ${{ matrix.BUILD_SHARED_LIBS }}
       MLOPS: ${{ matrix.BUILD_SHARED_LIBS }}
       BUILD_CUDA_MODULE: OFF
-      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      DEVELOPER_BUILD: ${{ inputs.developer_build }}
       OPEN3D_CPU_RENDERING: true
     steps:
       - name: Checkout source code
@@ -570,24 +570,24 @@ jobs:
           maximize_ubuntu_github_actions_build_space
       - name: Docker build CPU lib packages
         run: |
-          if [ "${{ matrix.BUILD_SHARED_LIBS }}" = "OFF" ] && [ "${{ env.MLOPS }}" = "OFF" ] && [ "${{ env.DEVELOPER_BUILD }}" = "ON" ]; then
+          if [ "${{ matrix.BUILD_SHARED_LIBS }}" = "OFF" ] && [ "${{ env.MLOPS }}" = "OFF" ] && [ "${{ inputs.developer_build }}" = "ON" ]; then
             docker/docker_build.sh cpu-static
-          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "OFF" ] && [ "${{ env.MLOPS }}" = "OFF" ] && [ "${{ env.DEVELOPER_BUILD }}" = "OFF" ]; then
+          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "OFF" ] && [ "${{ env.MLOPS }}" = "OFF" ] && [ "${{ inputs.developer_build }}" = "OFF" ]; then
             docker/docker_build.sh cpu-static-release
-          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "ON"  ] && [ "${{ env.MLOPS }}" = "ON"  ] && [ "${{ env.DEVELOPER_BUILD }}" = "ON"  ]; then
+          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "ON"  ] && [ "${{ env.MLOPS }}" = "ON"  ] && [ "${{ inputs.developer_build }}" = "ON"  ]; then
             docker/docker_build.sh cpu-shared-ml
-          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "ON"  ] && [ "${{ env.MLOPS }}" = "ON"  ] && [ "${{ env.DEVELOPER_BUILD }}" = "OFF" ]; then
+          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "ON"  ] && [ "${{ env.MLOPS }}" = "ON"  ] && [ "${{ inputs.developer_build }}" = "OFF" ]; then
             docker/docker_build.sh cpu-shared-ml-release
           fi
       - name: Docker test
         run: |
-          if [ "${{ matrix.BUILD_SHARED_LIBS }}" = "OFF" ] && [ "${{ env.MLOPS }}" = "OFF" ] && [ "${{ env.DEVELOPER_BUILD }}" = "ON" ]; then
+          if [ "${{ matrix.BUILD_SHARED_LIBS }}" = "OFF" ] && [ "${{ env.MLOPS }}" = "OFF" ] && [ "${{ inputs.developer_build }}" = "ON" ]; then
             docker/docker_test.sh cpu-static
-          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "OFF" ] && [ "${{ env.MLOPS }}" = "OFF" ] && [ "${{ env.DEVELOPER_BUILD }}" = "OFF" ]; then
+          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "OFF" ] && [ "${{ env.MLOPS }}" = "OFF" ] && [ "${{ inputs.developer_build }}" = "OFF" ]; then
             docker/docker_test.sh cpu-static-release
-          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "ON"  ] && [ "${{ env.MLOPS }}" = "ON"  ] && [ "${{ env.DEVELOPER_BUILD }}" = "ON"  ]; then
+          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "ON"  ] && [ "${{ env.MLOPS }}" = "ON"  ] && [ "${{ inputs.developer_build }}" = "ON"  ]; then
             docker/docker_test.sh cpu-shared-ml
-          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "ON"  ] && [ "${{ env.MLOPS }}" = "ON"  ] && [ "${{ env.DEVELOPER_BUILD }}" = "OFF" ]; then
+          elif [ "${{ matrix.BUILD_SHARED_LIBS }}" = "ON"  ] && [ "${{ env.MLOPS }}" = "ON"  ] && [ "${{ inputs.developer_build }}" = "OFF" ]; then
             docker/docker_test.sh cpu-shared-ml-release
           fi
       - name: Generate package attestation
@@ -637,11 +637,11 @@ jobs:
   # ============================================================
   linux-arm64-build-lib:
     name: Linux ARM64 Build Lib
-    if: ${{ env.BUILD_OPENBLAS == 'true' }}
+    if: ${{ inputs.build_openblas == 'true' }}
     runs-on: ubuntu-latest
     env:
       BUILD_CUDA_MODULE: OFF
-      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      DEVELOPER_BUILD: ${{ inputs.developer_build }}
       OPEN3D_CPU_RENDERING: true
     steps:
       - name: Checkout source code
@@ -665,7 +665,7 @@ jobs:
 
   linux-arm64-build-wheel:
     name: Linux ARM64 Build Wheel
-    if: ${{ env.BUILD_OPENBLAS == 'true' }}
+    if: ${{ inputs.build_openblas == 'true' }}
     needs: [linux-arm64-build-lib]
     runs-on: ubuntu-latest
     strategy:
@@ -685,7 +685,7 @@ jobs:
             python_version: '3.13'
     env:
       PYTHON_VERSION: ${{ matrix.python_version }}
-      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      DEVELOPER_BUILD: ${{ inputs.developer_build }}
       BUILD_PYTORCH_OPS: ON
       BUILD_TENSORFLOW_OPS: ${{ matrix.python_version >= '3.14' && 'OFF' || 'ON' }}
     steps:
@@ -704,7 +704,7 @@ jobs:
         run: |
           export OPEN3D_ARTIFACTS_DIR="${GITHUB_WORKSPACE}/open3d-artifacts"
           PY_VER="${{ env.PYTHON_VERSION }}"
-          DEV_BUILD="${{ env.DEVELOPER_BUILD }}"
+          DEV_BUILD="${{ inputs.developer_build }}"
           if [ "$PY_VER" = "3.10" ] && [ "$DEV_BUILD" = "ON" ]; then
             docker/docker_build.sh openblas_wheel_py310_dev
           elif [ "$PY_VER" = "3.11" ] && [ "$DEV_BUILD" = "ON" ]; then
@@ -748,7 +748,7 @@ jobs:
 
   linux-arm64-test-wheel:
     name: Linux ARM64 Test Wheel
-    if: ${{ env.BUILD_OPENBLAS == 'true' }}
+    if: ${{ inputs.build_openblas == 'true' }}
     needs: [linux-arm64-build-wheel]
     runs-on: ubuntu-latest
     strategy:
@@ -805,11 +805,11 @@ jobs:
   # ============================================================
   linux-sycl-build-lib:
     name: Linux SYCL Build Lib
-    if: ${{ env.BUILD_SYCL == 'true' }}
+    if: ${{ inputs.build_sycl == 'true' }}
     runs-on: ubuntu-latest
     env:
       BUILD_CUDA_MODULE: OFF
-      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      DEVELOPER_BUILD: ${{ inputs.developer_build }}
       OPEN3D_CPU_RENDERING: true
     steps:
       - name: Checkout source code
@@ -833,7 +833,7 @@ jobs:
 
   linux-sycl-build-wheel:
     name: Linux SYCL Build Wheel
-    if: ${{ env.BUILD_SYCL == 'true' }}
+    if: ${{ inputs.build_sycl == 'true' }}
     needs: [linux-sycl-build-lib]
     runs-on: ubuntu-latest
     strategy:
@@ -853,7 +853,7 @@ jobs:
             python_version: '3.13'
     env:
       PYTHON_VERSION: ${{ matrix.python_version }}
-      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      DEVELOPER_BUILD: ${{ inputs.developer_build }}
       BUILD_PYTORCH_OPS: ON
       BUILD_TENSORFLOW_OPS: ON
     steps:
@@ -872,7 +872,7 @@ jobs:
         run: |
           export OPEN3D_ARTIFACTS_DIR="${GITHUB_WORKSPACE}/open3d-artifacts"
           PY_VER="${{ env.PYTHON_VERSION }}"
-          DEV_BUILD="${{ env.DEVELOPER_BUILD }}"
+          DEV_BUILD="${{ inputs.developer_build }}"
           if [ "$PY_VER" = "3.10" ] && [ "$DEV_BUILD" = "ON" ]; then
             docker/docker_build.sh sycl_wheel_py310_dev
           elif [ "$PY_VER" = "3.11" ] && [ "$DEV_BUILD" = "ON" ]; then
@@ -912,7 +912,7 @@ jobs:
 
   linux-sycl-test-wheel:
     name: Linux SYCL Test Wheel
-    if: ${{ env.BUILD_SYCL == 'true' }}
+    if: ${{ inputs.build_sycl == 'true' }}
     needs: [linux-sycl-build-wheel]
     runs-on: ubuntu-latest
     strategy:
@@ -990,7 +990,7 @@ jobs:
       BUILD_DIR: "C:\\Open3D\\build"
       INSTALL_DIR: "C:\\Program Files\\Open3D"
       NPROC: 6
-      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      DEVELOPER_BUILD: ${{ inputs.developer_build }}
     steps:
       - name: Disk space used
         run: Get-PSDrive
@@ -1221,7 +1221,7 @@ jobs:
       BUILD_DIR: "C:\\Open3D\\build_wheel"
       INSTALL_DIR: "C:\\Open3D\\install"
       NPROC: 6
-      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      DEVELOPER_BUILD: ${{ inputs.developer_build }}
     steps:
       - name: Install glslang via vcpkg
         run: |
@@ -1417,7 +1417,7 @@ jobs:
       BUILD_SHARED_LIBS: ${{ matrix.CONFIG }}
       BUILD_TENSORFLOW_OPS: 'ON'
       BUILD_PYTORCH_OPS: 'ON'
-      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      DEVELOPER_BUILD: ${{ inputs.developer_build }}
       BUILD_CUDA_MODULE: OFF
       NPROC: 4
     steps:
@@ -1661,7 +1661,7 @@ jobs:
       artifact-metadata: write
     runs-on: ubuntu-latest
     env:
-      DEVELOPER_BUILD: ${{ env.DEVELOPER_BUILD }}
+      DEVELOPER_BUILD: ${{ inputs.developer_build }}
     steps:
       - name: Checkout Open3D source code
         uses: actions/checkout@v4
@@ -1709,7 +1709,7 @@ jobs:
   # ============================================================
   upload-wheels-to-pypi:
     name: Upload Wheels to PyPI
-    if: ${{ github.ref == 'refs/heads/main' && env.UPLOAD_WHEELS == 'true' }}
+    if: ${{ github.ref == 'refs/heads/main' && inputs.upload_wheels == 'true' }}
     needs:
       - linux-cuda-build-wheel
       - linux-cpu-build-lib
