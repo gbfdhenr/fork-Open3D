@@ -73,7 +73,9 @@ jobs:
       CMAKE_PLATFORM: "x64"
       CUDA_VERSION: "12.4"
       CUDA_PATH: "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4"
-      Python_ROOT_DIR: "C:/hostedtoolcache/windows/Python/${{ matrix.python_version }}/x64"
+      # Chocolatey installs Python to C:/Program Files/Python3X
+      # Use a version-specific path
+      PYTHON_INSTALL_ROOT: "C:/Program Files"
 
     steps:
       - name: Checkout repository
@@ -81,6 +83,11 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+
+      - name: Install Python via Chocolatey
+        run: |
+          choco install python310 python311 python312 python313 python314 --no-progress -y
+          refreshenv
 
       - name: Setup Python ${{ matrix.python_version }}
         uses: actions/setup-python@v5
@@ -137,7 +144,7 @@ jobs:
             -DUSE_BLAS=${{ env.USE_BLAS }} `
             -DUSE_SYSTEM_BLAS=${{ env.USE_SYSTEM_BLAS }} `
             -DSTATIC_WINDOWS_RUNTIME=${{ env.STATIC_WINDOWS_RUNTIME }} `
-            -DPython3_ROOT_DIR="${{ env.Python_ROOT_DIR }}" `
+            -DPython3_ROOT_DIR="${{ env.PYTHON_INSTALL_ROOT }}/Python${{ matrix.python_version }}" `
             -DPython3_FIND_REGISTRY=NEVER `
             -DCUDA_TOOLKIT_ROOT_DIR="${{ env.CUDA_PATH }}"
 
@@ -149,7 +156,7 @@ jobs:
         run: |
           cmake --build build --config ${{ env.BUILD_TYPE }} --target pip-package --parallel
         env:
-          PYTHON_EXECUTABLE: ${{ env.Python_ROOT_DIR }}/python.exe
+          PYTHON_EXECUTABLE: ${{ env.PYTHON_INSTALL_ROOT }}/Python${{ matrix.python_version }}/python.exe
 
       - name: Verify wheel
         run: |
