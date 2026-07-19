@@ -110,7 +110,7 @@ jobs:
 
       - name: Install Vulkan SDK
         run: |
-          Start-Process -Wait C:\vulkan-installer\vulkan-sdk.exe -ArgumentList "/S", "/NCRC"
+          Start-Process -Wait C:\vulkan-installer\vulkan-sdk.exe
           $vulkanPath = Get-ChildItem "C:/VulkanSDK" -Directory | Sort-Object Name -Descending | Select-Object -First 1
           $env:VULKAN_SDK = $vulkanPath.FullName
           echo "VULKAN_SDK=$env:VULKAN_SDK" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -134,7 +134,7 @@ jobs:
         run: |
           # Use cached installer
           $installer = "C:\vs-installer\vs_BuildTools.exe"
-          $params = "--quiet --wait --norestart --nocache --installPath `"${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools`" --add Microsoft.VisualStudio.Workload.NativeDesktop --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.VC.Runtime.x64 --includeRecommended"
+          $params = "--wait --norestart --nocache --installPath `"${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools`" --add Microsoft.VisualStudio.Workload.NativeDesktop --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.VC.Runtime.x64 --includeRecommended"
           Start-Process -Wait $installer -ArgumentList $params
           # Find MSVC installation path dynamically (handles both Program Files and Program Files (x86))
           $vsInstallDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools"
