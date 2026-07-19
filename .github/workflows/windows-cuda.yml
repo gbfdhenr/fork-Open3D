@@ -62,7 +62,7 @@ env:
 jobs:
   windows-cuda-build:
     name: "windows-x64-cuda-${{ matrix.python_version }}"
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 180
     strategy:
       fail-fast: false
