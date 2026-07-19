@@ -111,10 +111,11 @@ jobs:
         if: steps.cuda-installer-cache.outputs.cache-hit != 'true'
         run: |
           mkdir C:\cuda-installer
-          # Try multiple URL patterns for CUDA 12.4
+          # Try multiple URL patterns for CUDA 12.4 (latest 12.4.x)
           $urls = @(
+            "https://developer.download.nvidia.com/compute/cuda/12.4.1/local_installers/cuda_12.4.1_551.61_windows.exe",
             "https://developer.download.nvidia.com/compute/cuda/12.4.0/local_installers/cuda_12.4.0_551.54_windows.exe",
-            "https://developer.nvidia.com/compute/cuda/12.4.0/local_installers/cuda_12.4.0_551.54_windows.exe"
+            "https://developer.nvidia.com/compute/cuda/12.4.1/local_installers/cuda_12.4.1_551.61_windows.exe"
           )
           $success = $false
           foreach ($url in $urls) {
@@ -142,15 +143,15 @@ jobs:
         id: vulkan-installer-cache
         with:
           path: C:\vulkan-installer
-          key: vulkan-installer-latest
+          key: vulkan-installer-1.4.350
           retention-days: 30
 
       - name: Download Vulkan SDK installer (if not cached)
         if: steps.vulkan-installer-cache.outputs.cache-hit != 'true'
         run: |
           mkdir C:\vulkan-installer
-          # Use the latest Vulkan SDK installer URL
-          $url = "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe"
+          # Use specific Vulkan SDK version URL
+          $url = "https://sdk.lunarg.com/sdk/download/1.4.350.0/windows/vulkan-sdk.exe"
           Write-Host "Downloading Vulkan SDK from: $url"
           Invoke-WebRequest $url -OutFile C:\vulkan-installer\vulkan-sdk.exe -ErrorAction Stop
 
