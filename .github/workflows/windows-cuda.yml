@@ -115,11 +115,27 @@ jobs:
       - name: Install Visual Studio Build Tools (for cl.exe)
         run: |
           choco install visualstudio2022buildtools --no-progress -y --package-parameters "--add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended"
-          # Add MSVC to PATH (installs to Program Files (x86))
-          $vsPath = "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC"
-          $latest = Get-ChildItem $vsPath -Directory | Sort-Object Name -Descending | Select-Object -First 1
-          $vcvars = "$($latest.FullName)/bin/Hostx64/x64"
-          echo "$vcvars" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          # Find MSVC installation path dynamically (handles both Program Files and Program Files (x86))
+          $vsInstallDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools"
+          if (-not (Test-Path $vsInstallDir)) {
+            $vsInstallDir = "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools"
+          }
+          $msvcPath = Join-Path $vsInstallDir "VC\Tools\MSVC"
+          if (Test-Path $msvcPath) {
+            $latest = Get-ChildItem $msvcPath -Directory | Sort-Object Name -Descending | Select-Object -First 1
+            $vcvars = Join-Path $latest.FullName "bin\Hostx64\x64"
+            if (Test-Path $vcvars) {
+              echo "$vcvars" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+              Write-Host "Added MSVC to PATH: $vcvars"
+            } else {
+              Write-Error "MSVC bin directory not found: $vcvars"
+              exit 1
+            }
+          } else {
+            Write-Error "MSVC path not found: $msvcPath"
+            Get-ChildItem $vsInstallDir -Recurse -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq "MSVC" } | ForEach-Object { Write-Host "Found MSVC at: $($_.FullName)" }
+            exit 1
+          }
 
       - name: Cache CMake build
         uses: actions/cache@v4
