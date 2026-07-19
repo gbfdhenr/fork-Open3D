@@ -71,7 +71,8 @@ jobs:
     env:
       CMAKE_GENERATOR: "Visual Studio 17 2022"
       CMAKE_PLATFORM: "x64"
-      CUDA_PATH: "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v${{ env.CUDA_VERSION }}"
+      CUDA_VERSION: "12.4"
+      CUDA_PATH: "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4"
       Python_ROOT_DIR: "C:/hostedtoolcache/windows/Python/${{ matrix.python_version }}/x64"
 
     steps:
