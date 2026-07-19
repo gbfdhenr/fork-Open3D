@@ -69,8 +69,7 @@ jobs:
       matrix:
         python_version: [3.14]
     env:
-      CMAKE_GENERATOR: "Visual Studio 17 2022"
-      CMAKE_PLATFORM: "x64"
+      CMAKE_GENERATOR: "Ninja"
       CUDA_VERSION: "12.4"
       CUDA_PATH: "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4"
       # Python installed by Chocolatey to hosted tool cache
@@ -126,16 +125,12 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           pip install -r python/requirements.txt
           pip install -r python/requirements_test.txt
-          pip install wheel setuptools_scm
-
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
+          pip install wheel setuptools_scm ninja
 
       - name: Configure CMake
         run: |
           cmake -S . -B build `
             -G "${{ env.CMAKE_GENERATOR }}" `
-            -A ${{ env.CMAKE_PLATFORM }} `
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
             -DCMAKE_INSTALL_PREFIX=install `
             -DDEVELOPER_BUILD=${{ env.DEVELOPER_BUILD }} `
@@ -161,11 +156,11 @@ jobs:
 
       - name: Build Open3D (Core + Python Module)
         run: |
-          cmake --build build --config ${{ env.BUILD_TYPE }} --target pybind --parallel
+          cmake --build build --config ${{ env.BUILD_TYPE }} --target pybind -- -j4
 
       - name: Build Python Wheel
         run: |
-          cmake --build build --config ${{ env.BUILD_TYPE }} --target pip-package --parallel
+          cmake --build build --config ${{ env.BUILD_TYPE }} --target pip-package -- -j4
         env:
           PYTHON_EXECUTABLE: ${{ env.Python_ROOT_DIR }}/python.exe
 
