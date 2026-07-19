@@ -115,8 +115,8 @@ jobs:
       - name: Install Visual Studio Build Tools (for cl.exe)
         run: |
           choco install visualstudio2022buildtools --no-progress -y --package-parameters "--add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended"
-          # Add MSVC to PATH
-          $vsPath = "C:/Program Files/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC"
+          # Add MSVC to PATH (installs to Program Files (x86))
+          $vsPath = "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC"
           $latest = Get-ChildItem $vsPath -Directory | Sort-Object Name -Descending | Select-Object -First 1
           $vcvars = "$($latest.FullName)/bin/Hostx64/x64"
           echo "$vcvars" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
