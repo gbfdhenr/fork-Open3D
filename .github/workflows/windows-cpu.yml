@@ -92,9 +92,7 @@ jobs:
 
       - name: Install Visual Studio Build Tools (for cl.exe)
         run: |
-          Invoke-WebRequest "https://aka.ms/vs/17/release/vs_BuildTools.exe" -OutFile C:\vs_BuildTools.exe
-          $params = "--wait --norestart --nocache --installPath `"${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools`" --add Microsoft.VisualStudio.Workload.NativeDesktop --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.VC.Runtime.x64 --includeRecommended"
-          Start-Process -Wait C:\vs_BuildTools.exe -ArgumentList $params
+          choco install visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.NativeDesktop --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.VC.Runtime.x64 --includeRecommended" --no-progress -y
           # Find MSVC installation path dynamically
           $vsInstallDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools"
           if (-not (Test-Path $vsInstallDir)) {
