@@ -92,7 +92,7 @@ jobs:
 
       - name: Install Visual Studio Build Tools (for cl.exe)
         run: |
-          choco install visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.NativeDesktop --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.VC.Runtime.x64 --add Microsoft.VisualStudio.Component.Windows10SDK.22621 --includeRecommended" --no-progress -y
+          choco install visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.NativeDesktop --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.VC.Runtime.x64 --add Microsoft.VisualStudio.Component.Windows11SDK --includeRecommended" --no-progress -y
           # Find MSVC installation path dynamically
           $vsInstallDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools"
           if (-not (Test-Path $vsInstallDir)) {
