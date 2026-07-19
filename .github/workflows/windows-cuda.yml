@@ -112,6 +112,15 @@ jobs:
           echo "VULKAN_SDK=$env:VULKAN_SDK" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           echo "$env:VULKAN_SDK/Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+      - name: Install Visual Studio Build Tools (for cl.exe)
+        run: |
+          choco install visualstudio2022buildtools --no-progress -y --package-parameters "--add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended"
+          # Add MSVC to PATH
+          $vsPath = "C:/Program Files/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC"
+          $latest = Get-ChildItem $vsPath -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          $vcvars = "$($latest.FullName)/bin/Hostx64/x64"
+          echo "$vcvars" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Cache CMake build
         uses: actions/cache@v4
         with:
