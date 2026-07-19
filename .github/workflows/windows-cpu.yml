@@ -92,22 +92,50 @@ jobs:
           python --version
           pip --version
 
-      - name: Download and install Vulkan SDK
+      - name: Cache Vulkan SDK installer
+        uses: actions/cache@v4
+        id: vulkan-installer-cache
+        with:
+          path: C:\vulkan-installer
+          key: vulkan-installer-1.4.350
+          retention-days: 30
+
+      - name: Download Vulkan SDK installer (if not cached)
+        if: steps.vulkan-installer-cache.outputs.cache-hit != 'true'
         run: |
+          mkdir C:\vulkan-installer
           $url = "https://sdk.lunarg.com/sdk/download/1.4.350.0/windows/vulkan-sdk.exe"
           Write-Host "Downloading Vulkan SDK from: $url"
-          Invoke-WebRequest $url -OutFile C:\vulkan-sdk.exe -ErrorAction Stop
-          Start-Process -Wait C:\vulkan-sdk.exe -ArgumentList "/S", "/NCRC"
+          Invoke-WebRequest $url -OutFile C:\vulkan-installer\vulkan-sdk.exe -ErrorAction Stop
+
+      - name: Install Vulkan SDK
+        run: |
+          Start-Process -Wait C:\vulkan-installer\vulkan-sdk.exe -ArgumentList "/S", "/NCRC"
           $vulkanPath = Get-ChildItem "C:/VulkanSDK" -Directory | Sort-Object Name -Descending | Select-Object -First 1
           $env:VULKAN_SDK = $vulkanPath.FullName
           echo "VULKAN_SDK=$env:VULKAN_SDK" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           echo "$env:VULKAN_SDK/Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Download and install Visual Studio Build Tools (for cl.exe)
+      - name: Cache VS Build Tools installer
+        uses: actions/cache@v4
+        id: vs-installer-cache
+        with:
+          path: C:\vs-installer
+          key: vs-installer-2022
+          retention-days: 30
+
+      - name: Download VS Build Tools installer (if not cached)
+        if: steps.vs-installer-cache.outputs.cache-hit != 'true'
         run: |
-          Invoke-WebRequest "https://aka.ms/vs/17/release/vs_BuildTools.exe" -OutFile C:\vs_BuildTools.exe
+          mkdir C:\vs-installer
+          Invoke-WebRequest "https://aka.ms/vs/17/release/vs_BuildTools.exe" -OutFile C:\vs-installer\vs_BuildTools.exe
+
+      - name: Install Visual Studio Build Tools (for cl.exe)
+        run: |
+          # Use cached installer
+          $installer = "C:\vs-installer\vs_BuildTools.exe"
           $params = "--quiet --wait --norestart --nocache --installPath `"${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools`" --add Microsoft.VisualStudio.Workload.NativeDesktop --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.VC.Runtime.x64 --includeRecommended"
-          Start-Process -Wait C:\vs_BuildTools.exe -ArgumentList $params
+          Start-Process -Wait $installer -ArgumentList $params
           # Find MSVC installation path dynamically (handles both Program Files and Program Files (x86))
           $vsInstallDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools"
           if (-not (Test-Path $vsInstallDir)) {
