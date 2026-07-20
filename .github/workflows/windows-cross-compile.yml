@@ -119,6 +119,10 @@ jobs:
             -DUSE_SYSTEM_STDGPU=${{ env.USE_SYSTEM_STDGPU }} \
             -DSTATIC_WINDOWS_RUNTIME=${{ env.STATIC_WINDOWS_RUNTIME }}
 
+      - name: Build OpenBLAS first
+        run: |
+          cmake --build build-mingw64 --config ${{ env.BUILD_TYPE }} --target ext_openblas -- -j$(nproc)
+
       - name: Build Open3D Core Library
         run: |
           cmake --build build-mingw64 --config ${{ env.BUILD_TYPE }} -- -j$(nproc)
