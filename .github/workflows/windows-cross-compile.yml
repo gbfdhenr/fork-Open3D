@@ -1,0 +1,255 @@
+# Windows x64 Cross-Compiled CPU Release Wheel (Linux -> Windows via MinGW-w64)
+name: "Windows x64 Cross-Compile CPU Release Wheel"
+
+on:
+  workflow_dispatch:
+    inputs:
+      python_version:
+        description: 'Python version to build'
+        required: false
+        type: string
+      build_type:
+        description: 'Build type'
+        required: false
+        type: choice
+        options: [Release, Debug]
+        default: 'Release'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  DEVELOPER_BUILD: "OFF"
+  BUILD_CUDA_MODULE: "OFF"
+  BUILD_COMMON_CUDA_ARCHS: "OFF"
+  BUILD_SHARED_LIBS: "OFF"
+  BUILD_PYTHON_MODULE: "ON"
+  BUILD_EXAMPLES: "OFF"
+  BUILD_UNIT_TESTS: "OFF"
+  BUILD_BENCHMARKS: "OFF"
+  BUILD_GUI: "OFF"
+  BUILD_WEBRTC: "OFF"
+  BUILD_JUPYTER_EXTENSION: "OFF"
+  BUILD_TENSORFLOW_OPS: "OFF"
+  BUILD_PYTORCH_OPS: "OFF"
+  BUNDLE_OPEN3D_ML: "OFF"
+  USE_BLAS: "ON"
+  USE_SYSTEM_BLAS: "ON"
+  USE_SYSTEM_EIGEN3: "ON"
+  USE_SYSTEM_FMT: "ON"
+  USE_SYSTEM_GLEW: "ON"
+  USE_SYSTEM_GLFW: "ON"
+  USE_SYSTEM_IMGUI: "ON"
+  USE_SYSTEM_JSONCPP: "ON"
+  USE_SYSTEM_TBB: "ON"
+  USE_SYSTEM_TINYGLTF: "ON"
+  USE_SYSTEM_TINYOBJLOADER: "ON"
+  USE_SYSTEM_NANOFLANN: "ON"
+  USE_SYSTEM_STDGPU: "ON"
+  STATIC_WINDOWS_RUNTIME: "ON"
+  PYTHON_VERSIONS: "3.10 3.11 3.12 3.13"
+  BUILD_TYPE: "Release"
+
+jobs:
+  linux-cross-compile:
+    name: "Linux Cross-Compile Windows x64"
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: [3.11, 3.12, 3.13]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Setup MinGW-w64 and dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            mingw-w64 \
+            mingw-w64-tools \
+            cmake \
+            ninja-build \
+            libeigen3-dev \
+            libfmt-dev \
+            libglew-dev \
+            libglfw3-dev \
+            libjsoncpp-dev \
+            libtbb-dev \
+            libtinygltf-dev \
+            libnanoflann-dev \
+            libopenblas-dev \
+            python3 \
+            python3-pip \
+            python3-venv
+
+      - name: Install Python for host build tools
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python_version }}
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install cmake ninja setuptools wheel
+
+      - name: Configure CMake (Cross-compile to Windows)
+        run: |
+          cmake -S . -B build-mingw64 \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-mingw64.cmake \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_INSTALL_PREFIX=install \
+            -DCMAKE_GENERATOR=Ninja \
+            -DDEVELOPER_BUILD=${{ env.DEVELOPER_BUILD }} \
+            -DBUILD_CUDA_MODULE=${{ env.BUILD_CUDA_MODULE }} \
+            -DBUILD_COMMON_CUDA_ARCHS=${{ env.BUILD_COMMON_CUDA_ARCHS }} \
+            -DBUILD_SHARED_LIBS=${{ env.BUILD_SHARED_LIBS }} \
+            -DBUILD_PYTHON_MODULE=${{ env.BUILD_PYTHON_MODULE }} \
+            -DBUILD_EXAMPLES=${{ env.BUILD_EXAMPLES }} \
+            -DBUILD_UNIT_TESTS=${{ env.BUILD_UNIT_TESTS }} \
+            -DBUILD_BENCHMARKS=${{ env.BUILD_BENCHMARKS }} \
+            -DBUILD_GUI=${{ env.BUILD_GUI }} \
+            -DBUILD_WEBRTC=${{ env.BUILD_WEBRTC }} \
+            -DBUILD_JUPYTER_EXTENSION=${{ env.BUILD_JUPYTER_EXTENSION }} \
+            -DBUILD_TENSORFLOW_OPS=${{ env.BUILD_TENSORFLOW_OPS }} \
+            -DBUILD_PYTORCH_OPS=${{ env.BUILD_PYTORCH_OPS }} \
+            -DBUNDLE_OPEN3D_ML=${{ env.BUNDLE_OPEN3D_ML }} \
+            -DUSE_BLAS=${{ env.USE_BLAS }} \
+            -DUSE_SYSTEM_BLAS=${{ env.USE_SYSTEM_BLAS }} \
+            -DUSE_SYSTEM_EIGEN3=${{ env.USE_SYSTEM_EIGEN3 }} \
+            -DUSE_SYSTEM_FMT=${{ env.USE_SYSTEM_FMT }} \
+            -DUSE_SYSTEM_GLEW=${{ env.USE_SYSTEM_GLEW }} \
+            -DUSE_SYSTEM_GLFW=${{ env.USE_SYSTEM_GLFW }} \
+            -DUSE_SYSTEM_IMGUI=${{ env.USE_SYSTEM_IMGUI }} \
+            -DUSE_SYSTEM_JSONCPP=${{ env.USE_SYSTEM_JSONCPP }} \
+            -DUSE_SYSTEM_TBB=${{ env.USE_SYSTEM_TBB }} \
+            -DUSE_SYSTEM_TINYGLTF=${{ env.USE_SYSTEM_TINYGLTF }} \
+            -DUSE_SYSTEM_TINYOBJLOADER=${{ env.USE_SYSTEM_TINYOBJLOADER }} \
+            -DUSE_SYSTEM_NANOFLANN=${{ env.USE_SYSTEM_NANOFLANN }} \
+            -DUSE_SYSTEM_STDGPU=${{ env.USE_SYSTEM_STDGPU }} \
+            -DSTATIC_WINDOWS_RUNTIME=${{ env.STATIC_WINDOWS_RUNTIME }}
+
+      - name: Build Open3D Core + Python Module
+        run: |
+          cmake --build build-mingw64 --config ${{ env.BUILD_TYPE }} --target pybind -- -j$(nproc)
+
+      - name: Build Python Wheel
+        run: |
+          cmake --build build-mingw64 --config ${{ env.BUILD_TYPE }} --target pip-package -- -j$(nproc)
+        env:
+          PYTHON_EXECUTABLE: python
+
+      - name: Verify wheel
+        run: |
+          WHEEL=$(find build-mingw64/lib/python_package/pip_package -name "*.whl" | head -1)
+          echo "Found wheel: $WHEEL"
+          ls -la "$WHEEL"
+          # Note: Can't test install on Linux since it's a Windows wheel
+          # Wheel will be tested on Windows runner
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: open3d-wheel-windows-x64-cross-${{ matrix.python_version }}
+          path: build-mingw64/lib/python_package/pip_package/*.whl
+          retention-days: 30
+          if-no-files-found: error
+
+  windows-test:
+    name: "Test Wheel on Windows"
+    needs: linux-cross-compile
+    runs-on: windows-2022
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: [3.11, 3.12, 3.13]
+
+    steps:
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: wheels
+          pattern: open3d-wheel-windows-x64-cross-${{ matrix.python_version }}
+          merge-multiple: true
+
+      - name: List wheels
+        run: |
+          Get-ChildItem wheels -Recurse -Filter "*.whl" | Select-Object FullName, Length
+
+      - name: Install Python
+        run: |
+          choco install python${{ matrix.python_version }} --no-progress -y
+          $pythonPath = "C:/hostedtoolcache/windows/Python/${{ matrix.python_version }}/x64"
+          echo "$pythonPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "$pythonPath/Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Verify Python
+        run: |
+          python --version
+          pip --version
+
+      - name: Test wheel installation
+        run: |
+          $wheel = Get-ChildItem wheels -Recurse -Filter "*.whl" | Select-Object -First 1
+          Write-Host "Installing: $($wheel.FullName)"
+          pip install $wheel.FullName
+          python -c "import open3d as o3d; print('Open3D version:', o3d.__version__); print('CUDA available:', o3d.core.cuda.is_available())"
+
+      - name: Run basic tests
+        run: |
+          python -c "
+          import open3d as o3d
+          import numpy as np
+          
+          # Test core functionality
+          pcd = o3d.geometry.PointCloud()
+          pcd.points = o3d.utility.Vector3dVector(np.random.rand(100, 3))
+          print('PointCloud created:', len(pcd.points))
+          
+          # Test tensor operations
+          tensor = o3d.core.Tensor([1, 2, 3])
+          print('Tensor created:', tensor)
+          
+          # Test visualization (headless)
+          vis = o3d.visualization.Visualizer()
+          vis.create_window(visible=False)
+          vis.destroy_window()
+          print('Visualization test passed')
+          
+          print('All basic tests passed!')
+          "
+
+  release-wheels:
+    name: "Release Wheels"
+    needs: [linux-cross-compile, windows-test]
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: wheels
+          pattern: open3d-wheel-windows-x64-cross-*
+          merge-multiple: true
+
+      - name: List all wheels
+        run: find wheels -name "*.whl" -type f | sort
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: wheels/*.whl
+          generate_release_notes: true
+          draft: false
+          prerelease: false
