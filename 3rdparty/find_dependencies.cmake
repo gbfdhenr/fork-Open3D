@@ -173,6 +173,9 @@ set(ExternalProject_CMAKE_ARGS
     -DCMAKE_CUDA_FLAGS=${CMAKE_CUDA_FLAGS}
     -DCMAKE_SYSTEM_VERSION=${CMAKE_SYSTEM_VERSION}
     -DCMAKE_INSTALL_LIBDIR=${Open3D_INSTALL_LIB_DIR}
+    # Cross-compilation settings (avoid try_compile execution)
+    -DCMAKE_CROSSCOMPILING=ON
+    -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
     # Always build 3rd party code in Release mode. Ignored by multi-config
     # generators (XCode, MSVC). MSVC needs matching config anyway.
     -DCMAKE_BUILD_TYPE=Release
