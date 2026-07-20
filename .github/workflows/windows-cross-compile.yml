@@ -101,6 +101,9 @@ jobs:
             -DBUILD_TENSORFLOW_OPS=${{ env.BUILD_TENSORFLOW_OPS }} \
             -DBUILD_PYTORCH_OPS=${{ env.BUILD_PYTORCH_OPS }} \
             -DBUNDLE_OPEN3D_ML=${{ env.BUNDLE_OPEN3D_ML }} \
+            -DBUILD_ISPC_MODULE=OFF \
+            -DBUILD_SYCL_MODULE=OFF \
+            -DWITH_IPP=OFF \
             -DUSE_BLAS=${{ env.USE_BLAS }} \
             -DUSE_SYSTEM_BLAS=${{ env.USE_SYSTEM_BLAS }} \
             -DUSE_SYSTEM_EIGEN3=${{ env.USE_SYSTEM_EIGEN3 }} \
