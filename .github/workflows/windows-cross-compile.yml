@@ -35,7 +35,7 @@ env:
   BUILD_PYTORCH_OPS: "OFF"
   BUNDLE_OPEN3D_ML: "OFF"
   USE_BLAS: "ON"
-  USE_SYSTEM_BLAS: "ON"
+  USE_SYSTEM_BLAS: "OFF"
   USE_SYSTEM_EIGEN3: "ON"
   USE_SYSTEM_FMT: "ON"
   USE_SYSTEM_GLEW: "OFF"
@@ -72,13 +72,13 @@ jobs:
           sudo apt-get install -y -qq \
             mingw-w64 \
             mingw-w64-tools \
+            gfortran-mingw-w64 \
             cmake \
             ninja-build \
             libeigen3-dev \
             libfmt-dev \
             libjsoncpp-dev \
-            libtbb-dev \
-            libopenblas-dev
+            libtbb-dev
 
       - name: Configure CMake (Cross-compile core library only)
         run: |
