@@ -4,6 +4,13 @@
 cmake_minimum_required(VERSION 3.24)
 
 # =============================================================================
+# Cross-Compile Settings
+# =============================================================================
+# Avoid try_compile execution (can't run Windows executables on Linux)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+set(CMAKE_CROSSCOMPILING ON)
+
+# =============================================================================
 # Target Platform
 # =============================================================================
 set(CMAKE_SYSTEM_NAME Windows)
