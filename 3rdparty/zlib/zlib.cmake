@@ -21,8 +21,7 @@ ExternalProject_Add(
     CMAKE_ARGS
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5
         -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
-        # zlib needs visible symbols for examples. Disabling example building causes
-        # assember error in GPU CI. zlib symbols are hidden during linking.
+        -DBUILD_SHARED_LIBS=OFF
         ${ExternalProject_CMAKE_ARGS}
     BUILD_BYPRODUCTS
         <INSTALL_DIR>/lib/${CMAKE_STATIC_LIBRARY_PREFIX}${lib_name}${CMAKE_STATIC_LIBRARY_SUFFIX}
