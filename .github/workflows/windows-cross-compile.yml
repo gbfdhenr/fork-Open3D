@@ -38,15 +38,15 @@ env:
   USE_SYSTEM_BLAS: "ON"
   USE_SYSTEM_EIGEN3: "ON"
   USE_SYSTEM_FMT: "ON"
-  USE_SYSTEM_GLEW: "ON"
-  USE_SYSTEM_GLFW: "ON"
-  USE_SYSTEM_IMGUI: "ON"
+  USE_SYSTEM_GLEW: "OFF"
+  USE_SYSTEM_GLFW: "OFF"
+  USE_SYSTEM_IMGUI: "OFF"
   USE_SYSTEM_JSONCPP: "ON"
   USE_SYSTEM_TBB: "ON"
-  USE_SYSTEM_TINYGLTF: "ON"
-  USE_SYSTEM_TINYOBJLOADER: "ON"
-  USE_SYSTEM_NANOFLANN: "ON"
-  USE_SYSTEM_STDGPU: "ON"
+  USE_SYSTEM_TINYGLTF: "OFF"
+  USE_SYSTEM_TINYOBJLOADER: "OFF"
+  USE_SYSTEM_NANOFLANN: "OFF"
+  USE_SYSTEM_STDGPU: "OFF"
   STATIC_WINDOWS_RUNTIME: "ON"
   PYTHON_VERSIONS: "3.10 3.11 3.12 3.13"
   BUILD_TYPE: "Release"
@@ -56,6 +56,8 @@ jobs:
     name: "Linux Cross-Compile Core Library"
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    strategy:
+      fail-fast: false
 
     steps:
       - name: Checkout repository
@@ -74,12 +76,8 @@ jobs:
             ninja-build \
             libeigen3-dev \
             libfmt-dev \
-            libglew-dev \
-            libglfw3-dev \
             libjsoncpp-dev \
             libtbb-dev \
-            libtinygltf-dev \
-            libnanoflann-dev \
             libopenblas-dev
 
       - name: Configure CMake (Cross-compile core library only)
@@ -93,7 +91,7 @@ jobs:
             -DBUILD_CUDA_MODULE=${{ env.BUILD_CUDA_MODULE }} \
             -DBUILD_COMMON_CUDA_ARCHS=${{ env.BUILD_COMMON_CUDA_ARCHS }} \
             -DBUILD_SHARED_LIBS=${{ env.BUILD_SHARED_LIBS }} \
-            -DBUILD_PYTHON_MODULE=OFF \
+            -DBUILD_PYTHON_MODULE=${{ env.BUILD_PYTHON_MODULE }} \
             -DBUILD_EXAMPLES=${{ env.BUILD_EXAMPLES }} \
             -DBUILD_UNIT_TESTS=${{ env.BUILD_UNIT_TESTS }} \
             -DBUILD_BENCHMARKS=${{ env.BUILD_BENCHMARKS }} \
@@ -129,7 +127,7 @@ jobs:
       - name: Upload core library artifact
         uses: actions/upload-artifact@v4
         with:
-          name: open3d-core-windows-x64-cross
+          name: open3d-core-windows-x64
           path: install/
           retention-days: 30
           if-no-files-found: error
@@ -138,7 +136,7 @@ jobs:
     name: "Build Wheel on Windows"
     needs: linux-cross-compile-core
     runs-on: windows-2022
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -151,12 +149,16 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Download prebuilt core library
+      - name: Download core library artifact
         uses: actions/download-artifact@v4
         with:
           path: open3d-install
-          pattern: open3d-core-windows-x64-cross
+          pattern: open3d-core-windows-x64
           merge-multiple: true
+
+      - name: List installed files
+        run: |
+          Get-ChildItem open3d-install -Recurse | Select-Object FullName, Length
 
       - name: Install Python
         run: |
@@ -172,50 +174,46 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          python -m pip install --upgrade pip
+          pip install --upgrade pip
           pip install cmake ninja setuptools wheel
 
       - name: Configure CMake (Build wheel using prebuilt core)
         run: |
-          cmake -S . -B build-windows `
-            -G "Ninja" `
-            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
-            -DCMAKE_INSTALL_PREFIX=install `
-            -DDEVELOPER_BUILD=${{ env.DEVELOPER_BUILD }} `
-            -DBUILD_CUDA_MODULE=${{ env.BUILD_CUDA_MODULE }} `
-            -DBUILD_COMMON_CUDA_ARCHS=${{ env.BUILD_COMMON_CUDA_ARCHS }} `
-            -DBUILD_SHARED_LIBS=ON `
-            -DBUILD_PYTHON_MODULE=ON `
-            -DBUILD_EXAMPLES=${{ env.BUILD_EXAMPLES }} `
-            -DBUILD_UNIT_TESTS=${{ env.BUILD_UNIT_TESTS }} `
-            -DBUILD_BENCHMARKS=${{ env.BUILD_BENCHMARKS }} `
-            -DBUILD_GUI=${{ env.BUILD_GUI }} `
-            -DBUILD_WEBRTC=${{ env.BUILD_WEBRTC }} `
-            -DBUILD_JUPYTER_EXTENSION=${{ env.BUILD_JUPYTER_EXTENSION }} `
-            -DBUILD_TENSORFLOW_OPS=${{ env.BUILD_TENSORFLOW_OPS }} `
-            -DBUILD_PYTORCH_OPS=${{ env.BUILD_PYTORCH_OPS }} `
-            -DBUNDLE_OPEN3D_ML=${{ env.BUNDLE_OPEN3D_ML }} `
-            -DUSE_BLAS=${{ env.USE_BLAS }} `
-            -DUSE_SYSTEM_BLAS=${{ env.USE_SYSTEM_BLAS }} `
-            -DSTATIC_WINDOWS_RUNTIME=${{ env.STATIC_WINDOWS_RUNTIME }} `
-            -DOPEN3D_USE_INSTALLED_LIBRARY=ON `
-            -DCMAKE_PREFIX_PATH="${{ github.workspace }}/open3d-install" `
+          cmake -S . -B build ^
+            -G "Ninja" ^
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} ^
+            -DCMAKE_INSTALL_PREFIX=install ^
+            -DDEVELOPER_BUILD=${{ env.DEVELOPER_BUILD }} ^
+            -DBUILD_CUDA_MODULE=${{ env.BUILD_CUDA_MODULE }} ^
+            -DBUILD_COMMON_CUDA_ARCHS=${{ env.BUILD_COMMON_CUDA_ARCHS }} ^
+            -DBUILD_SHARED_LIBS=ON ^
+            -DBUILD_PYTHON_MODULE=ON ^
+            -DBUILD_EXAMPLES=${{ env.BUILD_EXAMPLES }} ^
+            -DBUILD_UNIT_TESTS=${{ env.BUILD_UNIT_TESTS }} ^
+            -DBUILD_BENCHMARKS=${{ env.BUILD_BENCHMARKS }} ^
+            -DBUILD_GUI=${{ env.BUILD_GUI }} ^
+            -DBUILD_WEBRTC=${{ env.BUILD_WEBRTC }} ^
+            -DBUILD_JUPYTER_EXTENSION=${{ env.BUILD_JUPYTER_EXTENSION }} ^
+            -DBUILD_TENSORFLOW_OPS=${{ env.BUILD_TENSORFLOW_OPS }} ^
+            -DBUILD_PYTORCH_OPS=${{ env.BUILD_PYTORCH_OPS }} ^
+            -DBUNDLE_OPEN3D_ML=${{ env.BUNDLE_OPEN3D_ML }} ^
+            -DUSE_BLAS=${{ env.USE_BLAS }} ^
+            -DUSE_SYSTEM_BLAS=${{ env.USE_SYSTEM_BLAS }} ^
+            -DSTATIC_WINDOWS_RUNTIME=${{ env.STATIC_WINDOWS_RUNTIME }} ^
+            -DOPEN3D_USE_INSTALLED_LIBRARY=ON ^
+            -DOpen3D_DIR="${{ github.workspace }}/open3d-install/lib/cmake/Open3D" ^
             -DPython3_ROOT_DIR="C:/hostedtoolcache/windows/Python/${{ matrix.python_version }}/x64"
 
       - name: Build Python Wheel
         run: |
-          cmake --build build-windows --config ${{ env.BUILD_TYPE }} --target pip-package -- -j4
+          cmake --build build --config ${{ env.BUILD_TYPE }} --target pip-package -- -j4
+        env:
+          PYTHON_EXECUTABLE: "C:/hostedtoolcache/windows/Python/${{ matrix.python_version }}/x64/python.exe"
 
       - name: Verify wheel
         run: |
-          $wheel = Get-ChildItem build-windows/lib/python_package/pip_package -Filter "*.whl" | Select-Object -First 1
+          $wheel = Get-ChildItem build/lib/python_package/pip_package -Filter "*.whl" | Select-Object -First 1
           Write-Host "Found wheel: $($wheel.Name)"
-          $wheel | Select-Object FullName, Length
-
-      - name: Test wheel installation
-        run: |
-          $wheel = Get-ChildItem build-windows/lib/python_package/pip_package -Filter "*.whl" | Select-Object -First 1
-          Write-Host "Installing: $($wheel.FullName)"
           pip install $wheel.FullName
           python -c "import open3d as o3d; print('Open3D version:', o3d.__version__); print('CUDA available:', o3d.core.cuda.is_available())"
 
@@ -224,36 +222,36 @@ jobs:
           python -c "
           import open3d as o3d
           import numpy as np
-
+          
           # Test core functionality
           pcd = o3d.geometry.PointCloud()
           pcd.points = o3d.utility.Vector3dVector(np.random.rand(100, 3))
           print('PointCloud created:', len(pcd.points))
-
+          
           # Test tensor operations
           tensor = o3d.core.Tensor([1, 2, 3])
           print('Tensor created:', tensor)
-
+          
           # Test visualization (headless)
           vis = o3d.visualization.Visualizer()
           vis.create_window(visible=False)
           vis.destroy_window()
           print('Visualization test passed')
-
+          
           print('All basic tests passed!')
           "
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: open3d-wheel-windows-x64-cross-${{ matrix.python_version }}
-          path: build-windows/lib/python_package/pip_package/*.whl
+          name: open3d-wheel-windows-x64-${{ matrix.python_version }}
+          path: build/lib/python_package/pip_package/*.whl
           retention-days: 30
           if-no-files-found: error
 
   release-wheels:
     name: "Release Wheels"
-    needs: windows-build-wheel
+    needs: [linux-cross-compile-core, windows-build-wheel]
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -264,7 +262,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: wheels
-          pattern: open3d-wheel-windows-x64-cross-*
+          pattern: open3d-wheel-windows-x64-*
           merge-multiple: true
 
       - name: List all wheels
