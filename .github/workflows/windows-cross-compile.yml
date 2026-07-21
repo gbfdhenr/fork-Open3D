@@ -66,7 +66,32 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
+      - name: Cache MinGW-w64 and dependencies
+        id: cache-mingw
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/bin/x86_64-w64-mingw32-*
+            /usr/bin/i686-w64-mingw32-*
+            /usr/lib/gcc/x86_64-w64-mingw32
+            /usr/lib/gcc/i686-w64-mingw32
+            /usr/x86_64-w64-mingw32
+            /usr/i686-w64-mingw32
+            /usr/share/mingw-w64
+            /usr/include/eigen3
+            /usr/include/fmt
+            /usr/include/jsoncpp
+            /usr/include/tbb
+            /usr/lib/x86_64-linux-gnu/libeigen3*
+            /usr/lib/x86_64-linux-gnu/libfmt*
+            /usr/lib/x86_64-linux-gnu/libjsoncpp*
+            /usr/lib/x86_64-linux-gnu/libtbb*
+          key: mingw-deps-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt', '**/3rdparty/**/*.cmake') }}
+          restore-keys: |
+            mingw-deps-${{ runner.os }}-
+
       - name: Setup MinGW-w64 and dependencies
+        if: steps.cache-mingw.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
@@ -79,6 +104,32 @@ jobs:
             libfmt-dev \
             libjsoncpp-dev \
             libtbb-dev
+
+      - name: Cache OpenBLAS build
+        id: cache-openblas
+        uses: actions/cache@v4
+        with:
+          path: |
+            build-mingw64/openblas-prefix/src/openblas-build
+            build-mingw64/openblas-prefix/src/openblas-stamp
+            install/lib/libopenblas.a
+            install/include/openblas
+          key: openblas-build-${{ runner.os }}-${{ hashFiles('3rdparty/openblas/openblas.cmake') }}
+          restore-keys: |
+            openblas-build-${{ runner.os }}-
+
+      - name: Restore 3rdparty build cache
+        id: cache-3rdparty
+        uses: actions/cache@v4
+        with:
+          path: |
+            build-mingw64/*-prefix/src/*-build
+            build-mingw64/*-prefix/src/*-stamp
+            install/lib
+            install/include
+          key: mingw64-3rdparty-${{ runner.os }}-${{ hashFiles('3rdparty/**/*.cmake', 'cmake/toolchain-mingw64.cmake') }}
+          restore-keys: |
+            mingw64-3rdparty-${{ runner.os }}-
 
       - name: Configure CMake (Cross-compile core library only)
         run: |
@@ -120,8 +171,16 @@ jobs:
             -DSTATIC_WINDOWS_RUNTIME=${{ env.STATIC_WINDOWS_RUNTIME }}
 
       - name: Build OpenBLAS first
+        if: steps.cache-openblas.outputs.cache-hit != 'true'
         run: |
           cmake --build build-mingw64 --config ${{ env.BUILD_TYPE }} --target ext_openblas -- -j$(nproc)
+
+      - name: Build other 3rdparty dependencies
+        if: steps.cache-3rdparty.outputs.cache-hit != 'true'
+        run: |
+          cmake --build build-mingw64 --config ${{ env.BUILD_TYPE }} --target \
+            ext_glew ext_glfw ext_imgui ext_tinygltf ext_tinyobjloader ext_nanoflann ext_stdgpu \
+            ext_zlib ext_libpng ext_libjpeg ext_jsoncpp -- -j$(nproc)
 
       - name: Build Open3D Core Library
         run: |
