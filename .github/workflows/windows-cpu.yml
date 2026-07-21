@@ -171,6 +171,23 @@ jobs:
               }
             }
           }
+          # Explicitly add MSVC library path to LIB (for MSVCRTD.lib, etc.)
+          $vsInstallDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools"
+          if (-not (Test-Path $vsInstallDir)) {
+            $vsInstallDir = "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools"
+          }
+          $msvcPath = Join-Path $vsInstallDir "VC\Tools\MSVC"
+          if (Test-Path $msvcPath) {
+            $latest = Get-ChildItem $msvcPath -Directory | Sort-Object Name -Descending | Select-Object -First 1
+            $msvcLibPath = Join-Path $latest.FullName "lib\x64"
+            Write-Host "Checking MSVC lib path: $msvcLibPath"
+            if (Test-Path $msvcLibPath) {
+              $env:LIB = "$msvcLibPath;$env:LIB"
+              Write-Host "Added MSVC lib to LIB: $msvcLibPath"
+            } else {
+              Write-Warning "MSVC lib path not found: $msvcLibPath"
+            }
+          }
           # Configure CMake in SAME shell session so vcvarsall env persists
           cmake -S . -B build `
             -G "${{ env.CMAKE_GENERATOR }}" `
