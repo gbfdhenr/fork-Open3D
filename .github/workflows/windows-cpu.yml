@@ -92,7 +92,7 @@ jobs:
 
       - name: Install Visual Studio Build Tools (for cl.exe)
         run: |
-          choco install visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.NativeDesktop --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.VC.Runtime.x64 --add Microsoft.VisualStudio.Component.Windows11SDK --includeRecommended" --no-progress -y
+          choco install visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.VC.Runtime.x64 --add Microsoft.VisualStudio.Component.Windows11SDK --includeRecommended" --no-progress -y
           # Find MSVC installation path dynamically
           $vsInstallDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools"
           if (-not (Test-Path $vsInstallDir)) {
@@ -112,6 +112,28 @@ jobs:
           } else {
             Write-Error "MSVC path not found: $msvcPath"
             exit 1
+          }
+          # Add Windows SDK (for rc.exe) to PATH
+          $sdkRoot = "${env:ProgramFiles(x86)}\Windows Kits\10"
+          Write-Host "Checking SDK root: $sdkRoot"
+          if (Test-Path $sdkRoot) {
+            $sdkVersions = Get-ChildItem "$sdkRoot\bin" -Directory | Where-Object { $_.Name -match '^10\.' }
+            Write-Host "Found SDK versions: $($sdkVersions.Name -join ', ')"
+            $sdkVer = $sdkVersions | Sort-Object Name -Descending | Select-Object -First 1
+            if ($sdkVer) {
+              $rcPath = "$sdkRoot\bin\$($sdkVer.Name)\x64"
+              Write-Host "Checking rc.exe path: $rcPath"
+              if (Test-Path $rcPath) {
+                echo "$rcPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+                Write-Host "Added Windows SDK to PATH: $rcPath"
+              } else {
+                Write-Warning "rc.exe not found at: $rcPath"
+              }
+            } else {
+              Write-Warning "No SDK version 10.* found in $sdkRoot\bin"
+            }
+          } else {
+            Write-Warning "SDK root not found: $sdkRoot"
           }
 
       - name: Configure CMake (fetch deps via FetchContent)
