@@ -188,6 +188,43 @@ jobs:
               Write-Warning "MSVC lib path not found: $msvcLibPath"
             }
           }
+          # Explicitly add UCRT library path to LIB (for ucrtd.lib, etc.)
+          # Search SDK versions in Lib directory (not bin) to find UCRT libraries
+          $sdkLibRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\Lib"
+          if (Test-Path $sdkLibRoot) {
+            $sdkVersions = Get-ChildItem $sdkLibRoot -Directory | Where-Object { $_.Name -match '^10\.' }
+            Write-Host "Found SDK lib versions: $($sdkVersions.Name -join ', ')"
+            $sdkVer = $sdkVersions | Sort-Object Name -Descending | Select-Object -First 1
+            if ($sdkVer) {
+              $ucrtLibPath = "$sdkLibRoot\$($sdkVer.Name)\ucrt\x64"
+              Write-Host "Checking UCRT lib path: $ucrtLibPath"
+              if (Test-Path $ucrtLibPath) {
+                $env:LIB = "$ucrtLibPath;$env:LIB"
+                Write-Host "Added UCRT lib to LIB: $ucrtLibPath"
+              } else {
+                Write-Warning "UCRT lib path not found: $ucrtLibPath"
+                # Fallback: try common version paths
+                $fallbackPaths = @(
+                  "$sdkLibRoot\10.0.26100.0\ucrt\x64",
+                  "$sdkLibRoot\10.0.22621.0\ucrt\x64",
+                  "$sdkLibRoot\10.0.19041.0\ucrt\x64"
+                )
+                foreach ($path in $fallbackPaths) {
+                  if (Test-Path $path) {
+                    $env:LIB = "$path;$env:LIB"
+                    Write-Host "Added fallback UCRT lib to LIB: $path"
+                    break
+                  }
+                }
+              }
+            } else {
+              Write-Warning "No SDK version 10.* found in $sdkLibRoot"
+            }
+          } else {
+            Write-Warning "SDK Lib root not found: $sdkLibRoot"
+          }
+          # Debug: print final LIB path
+          Write-Host "Final LIB path: $env:LIB"
           # Configure CMake in SAME shell session so vcvarsall env persists
           cmake -S . -B build `
             -G "${{ env.CMAKE_GENERATOR }}" `
