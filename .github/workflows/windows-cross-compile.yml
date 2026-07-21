@@ -179,7 +179,7 @@ jobs:
         if: steps.cache-3rdparty.outputs.cache-hit != 'true'
         run: |
           cmake --build build-mingw64 --config ${{ env.BUILD_TYPE }} --target \
-            ext_glfw ext_tinygltf ext_tinyobjloader ext_nanoflann ext_stdgpu \
+            ext_glfw ext_tinygltf ext_tinyobjloader ext_nanoflann \
             ext_zlib ext_libpng ext_turbojpeg ext_jsoncpp ext_boringssl ext_curl -- -j$(nproc)
 
       - name: Build Open3D Core Library
