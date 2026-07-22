@@ -109,10 +109,6 @@ jobs:
             --add Microsoft.VisualStudio.Component.Windows11SDK --includeRecommended" `
             --no-progress -y
 
-      # Install ISPC compiler (required for Open3D ISPC kernels)
-      - name: Install ISPC
-        run: choco install ispc --no-progress -y
-
       # 5. Setup MSVC environment, PATH (cl.exe, rc.exe) and LIB paths
       - name: Setup MSVC environment
         run: |
