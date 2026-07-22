@@ -196,7 +196,17 @@ jobs:
 
       # 7. Build wheel (cmake target pip-package handles core + pybind + wheel)
       - name: Build wheel
-        run: cmake --build build --config ${{ env.BUILD_TYPE }} --target pip-package -- -j4
+        run: |
+          # Set INCLUDE for ExternalProject sub-builds (e.g. UVAtlas/DirectX headers need Windows SDK headers)
+          $sdkIncludeRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\Include"
+          if (Test-Path $sdkIncludeRoot) {
+            $sdkVer = Get-ChildItem $sdkIncludeRoot -Directory | Where-Object { $_.Name -match '^10\.' } | Sort-Object Name -Descending | Select-Object -First 1
+            if ($sdkVer) {
+              $env:INCLUDE = "$sdkIncludeRoot\$($sdkVer.Name)\um;$sdkIncludeRoot\$($sdkVer.Name)\ucrt;$sdkIncludeRoot\$($sdkVer.Name)\shared;$sdkIncludeRoot\$($sdkVer.Name)\winrt;$env:INCLUDE"
+              Write-Host "Set INCLUDE for sub-builds: $env:INCLUDE"
+            }
+          }
+          cmake --build build --config ${{ env.BUILD_TYPE }} --target pip-package -- -j4
         env:
           PYTHON_EXECUTABLE: ${{ env.Python_ROOT_DIR }}/python.exe
 
