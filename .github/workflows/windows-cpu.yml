@@ -112,15 +112,10 @@ jobs:
       # Install ISPC compiler (required for Open3D ISPC kernels) and add to PATH
       - name: Install ISPC
         run: |
-          # Get latest ISPC release download URL for Windows
-          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/ispc/ispc/releases/latest"
-          $asset = $release.assets | Where-Object { $_.name -like "*windows*.zip" } | Select-Object -First 1
-          if (-not $asset) {
-            Write-Error "No Windows ISPC release asset found"
-            exit 1
-          }
-          $url = $asset.browser_download_url
-          Write-Host "Downloading ISPC from: $url"
+          # Use ISPC 1.20.0 which includes ispc_isas.exe
+          $ispcVersion = "1.20.0"
+          $url = "https://github.com/ispc/ispc/releases/download/v$ispcVersion/ispc-v$ispcVersion-windows.zip"
+          Write-Host "Downloading ISPC $ispcVersion from: $url"
           $zipPath = "$env:TEMP\ispc.zip"
           $extractPath = "$env:TEMP\ispc"
           Invoke-WebRequest -Uri $url -OutFile $zipPath
