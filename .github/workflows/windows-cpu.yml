@@ -209,13 +209,14 @@ jobs:
       # 7. Build wheel (cmake target pip-package handles core + pybind + wheel)
       - name: Build wheel
         run: |
-          # Set INCLUDE for ExternalProject sub-builds (e.g. UVAtlas/DirectX headers need Windows SDK headers)
+          # Set CL env for MSVC (ExternalProject sub-builds inherit this)
           $sdkIncludeRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\Include"
           if (Test-Path $sdkIncludeRoot) {
             $sdkVer = Get-ChildItem $sdkIncludeRoot -Directory | Where-Object { $_.Name -match '^10\.' } | Sort-Object Name -Descending | Select-Object -First 1
             if ($sdkVer) {
-              $env:INCLUDE = "$sdkIncludeRoot\$($sdkVer.Name)\um;$sdkIncludeRoot\$($sdkVer.Name)\ucrt;$sdkIncludeRoot\$($sdkVer.Name)\shared;$sdkIncludeRoot\$($sdkVer.Name)\winrt;$sdkIncludeRoot\$($sdkVer.Name)\cpp;$env:INCLUDE"
-              Write-Host "Set INCLUDE for sub-builds: $env:INCLUDE"
+              $cl = "/I`"$sdkIncludeRoot\$($sdkVer.Name)\um`" /I`"$sdkIncludeRoot\$($sdkVer.Name)\ucrt`" /I`"$sdkIncludeRoot\$($sdkVer.Name)\shared`" /I`"$sdkIncludeRoot\$($sdkVer.Name)\winrt`" /I`"$sdkIncludeRoot\$($sdkVer.Name)\cpp`""
+              $env:CL = "$cl $env:CL"
+              Write-Host "Set CL for sub-builds: $env:CL"
             }
           }
           cmake --build build --config ${{ env.BUILD_TYPE }} --target pip-package -- -j4
