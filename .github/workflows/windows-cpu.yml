@@ -202,7 +202,7 @@ jobs:
           if (Test-Path $sdkIncludeRoot) {
             $sdkVer = Get-ChildItem $sdkIncludeRoot -Directory | Where-Object { $_.Name -match '^10\.' } | Sort-Object Name -Descending | Select-Object -First 1
             if ($sdkVer) {
-              $env:INCLUDE = "$sdkIncludeRoot\$($sdkVer.Name)\um;$sdkIncludeRoot\$($sdkVer.Name)\ucrt;$sdkIncludeRoot\$($sdkVer.Name)\shared;$sdkIncludeRoot\$($sdkVer.Name)\winrt;$env:INCLUDE"
+              $env:INCLUDE = "$sdkIncludeRoot\$($sdkVer.Name)\um;$sdkIncludeRoot\$($sdkVer.Name)\ucrt;$sdkIncludeRoot\$($sdkVer.Name)\shared;$sdkIncludeRoot\$($sdkVer.Name)\winrt;$sdkIncludeRoot\$($sdkVer.Name)\cpp;$env:INCLUDE"
               Write-Host "Set INCLUDE for sub-builds: $env:INCLUDE"
             }
           }
