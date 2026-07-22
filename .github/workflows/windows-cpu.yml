@@ -56,176 +56,119 @@ env:
 
 jobs:
   windows-cpu-build:
-    name: "windows-x64-cpu-${{ matrix.python_version }}"
+    name: "windows-x64-cpu-3.14"
     runs-on: windows-2022
     timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        python_version: [3.14]
     env:
       CMAKE_GENERATOR: "Ninja"
-      # Python installed by Chocolatey to hosted tool cache
-      Python_ROOT_DIR: "C:/hostedtoolcache/windows/Python/${{ matrix.python_version }}/x64"
+      Python_ROOT_DIR: "C:/hostedtoolcache/windows/Python/3.14/x64"
 
     steps:
+      # 1. Checkout repository (with submodules)
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
 
+      # 2. Install Python (Chocolatey) and add to PATH
       - name: Install Python via Chocolatey
-        run: |
-          choco install python314 --no-progress -y
+        run: choco install python314 --no-progress -y
 
       - name: Add Python to PATH
         run: |
-          $pythonPath = "C:/hostedtoolcache/windows/Python/${{ matrix.python_version }}/x64"
-          echo "$pythonPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          echo "$pythonPath/Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $p = "${{ env.Python_ROOT_DIR }}"
+          "$p" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "$p/Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+      # 3. Verify Python
       - name: Verify Python
         run: |
           python --version
           pip --version
 
-      - name: Install Visual Studio Build Tools (for cl.exe)
+      # 4. Cache VS Build Tools (install once, restore on subsequent runs)
+      - name: Cache VS Build Tools
+        id: cache-vs
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
+            C:\Program Files\Microsoft Visual Studio\2022\BuildTools
+          key: vs-buildtools-${{ runner.os }}-${{ hashFiles('.github/workflows/windows-cpu.yml') }}
+          restore-keys: |
+            vs-buildtools-${{ runner.os }}-
+
+      - name: Install VS Build Tools (if not cached)
+        if: steps.cache-vs.outputs.cache-hit != 'true'
         run: |
-          choco install visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.VC.Runtime.x64 --add Microsoft.VisualStudio.Component.Windows11SDK --includeRecommended" --no-progress -y
-          # Find MSVC installation path dynamically
+          choco install visualstudio2022buildtools `
+            --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools `
+            --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            --add Microsoft.VisualStudio.Component.VC.Runtime.x64 `
+            --add Microsoft.VisualStudio.Component.Windows11SDK --includeRecommended" `
+            --no-progress -y
+
+      # 5. Setup MSVC environment, PATH (cl.exe, rc.exe) and LIB paths
+      - name: Setup MSVC environment
+        run: |
+          # Find VS installation
           $vsInstallDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools"
-          if (-not (Test-Path $vsInstallDir)) {
-            $vsInstallDir = "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools"
-          }
+          if (-not (Test-Path $vsInstallDir)) { $vsInstallDir = "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools" }
+
+          # Add MSVC cl.exe to PATH
           $msvcPath = Join-Path $vsInstallDir "VC\Tools\MSVC"
           if (Test-Path $msvcPath) {
             $latest = Get-ChildItem $msvcPath -Directory | Sort-Object Name -Descending | Select-Object -First 1
             $vcvars = Join-Path $latest.FullName "bin\Hostx64\x64"
             if (Test-Path $vcvars) {
-              echo "$vcvars" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+              "$vcvars" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
               Write-Host "Added MSVC to PATH: $vcvars"
-            } else {
-              Write-Error "MSVC bin directory not found: $vcvars"
-              exit 1
             }
-          } else {
-            Write-Error "MSVC path not found: $msvcPath"
-            exit 1
-          }
-          # Add Windows SDK (for rc.exe) to PATH
-          $sdkRoot = "${env:ProgramFiles(x86)}\Windows Kits\10"
-          Write-Host "Checking SDK root: $sdkRoot"
-          if (Test-Path $sdkRoot) {
-            $sdkVersions = Get-ChildItem "$sdkRoot\bin" -Directory | Where-Object { $_.Name -match '^10\.' }
-            Write-Host "Found SDK versions: $($sdkVersions.Name -join ', ')"
-            $sdkVer = $sdkVersions | Sort-Object Name -Descending | Select-Object -First 1
-            if ($sdkVer) {
-              $rcPath = "$sdkRoot\bin\$($sdkVer.Name)\x64"
-              Write-Host "Checking rc.exe path: $rcPath"
-              if (Test-Path $rcPath) {
-                echo "$rcPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-                Write-Host "Added Windows SDK to PATH: $rcPath"
-              } else {
-                Write-Warning "rc.exe not found at: $rcPath"
-              }
-            } else {
-              Write-Warning "No SDK version 10.* found in $sdkRoot\bin"
-            }
-          } else {
-            Write-Warning "SDK root not found: $sdkRoot"
-          }
-          # Save vcvarsall path for CMake configure step
-          $vcvarsAll = Join-Path $vsInstallDir "VC\Auxiliary\Build\vcvarsall.bat"
-          if (Test-Path $vcvarsAll) {
-            echo "VCVARSALL_PATH=$vcvarsAll" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            Write-Host "Saved vcvarsall path to GITHUB_ENV"
-          } else {
-            Write-Warning "vcvarsall.bat not found at $vcvarsAll"
           }
 
-      - name: Configure CMake (with MSVC env)
-        run: |
-          # Setup full MSVC environment (vcvarsall) for INCLUDE/LIB paths
-          $vcvarsAll = $env:VCVARSALL_PATH
-          if (-not $vcvarsAll -or -not (Test-Path $vcvarsAll)) {
-            Write-Error "VCVARSALL_PATH not set or file not found: $vcvarsAll"
-            exit 1
+          # Save vcvarsall path for CMake step
+          $vcvarsAll = Join-Path $vsInstallDir "VC\Auxiliary\Build\vcvarsall.bat"
+          if (Test-Path $vcvarsAll) {
+            "VCVARSALL_PATH=$vcvarsAll" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
-          Write-Host "Setting up MSVC environment with: $vcvarsAll"
-          & $vcvarsAll x64
-          # Explicitly add Windows SDK library path to LIB (vcvarsall sometimes misses it)
+
+          # Add Windows SDK (rc.exe) to PATH
           $sdkRoot = "${env:ProgramFiles(x86)}\Windows Kits\10"
-          if (Test-Path $sdkRoot) {
-            $sdkVersions = Get-ChildItem "$sdkRoot\Lib" -Directory | Where-Object { $_.Name -match '^10\.' }
-            Write-Host "Found SDK lib versions: $($sdkVersions.Name -join ', ')"
-            $sdkVer = $sdkVersions | Sort-Object Name -Descending | Select-Object -First 1
+          if (Test-Path "$sdkRoot\bin") {
+            $sdkVer = Get-ChildItem "$sdkRoot\bin" -Directory | Where-Object { $_.Name -match '^10\.' } | Sort-Object Name -Descending | Select-Object -First 1
             if ($sdkVer) {
-              $sdkLibPath = "$sdkRoot\Lib\$($sdkVer.Name)\um\x64"
-              Write-Host "Checking Windows SDK lib path: $sdkLibPath"
-              if (Test-Path $sdkLibPath) {
-                $env:LIB = "$sdkLibPath;$env:LIB"
-                Write-Host "Added Windows SDK lib to LIB: $sdkLibPath"
-              } else {
-                Write-Warning "Windows SDK lib path not found: $sdkLibPath"
-              }
+              $rcPath = "$sdkRoot\bin\$($sdkVer.Name)\x64"
+              if (Test-Path $rcPath) { "$rcPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append }
             }
           }
-          # Explicitly add MSVC library path to LIB (for MSVCRTD.lib, etc.)
-          $vsInstallDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools"
-          if (-not (Test-Path $vsInstallDir)) {
-            $vsInstallDir = "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools"
-          }
-          $msvcPath = Join-Path $vsInstallDir "VC\Tools\MSVC"
-          if (Test-Path $msvcPath) {
-            $latest = Get-ChildItem $msvcPath -Directory | Sort-Object Name -Descending | Select-Object -First 1
-            $msvcLibPath = Join-Path $latest.FullName "lib\x64"
-            Write-Host "Checking MSVC lib path: $msvcLibPath"
-            if (Test-Path $msvcLibPath) {
-              $env:LIB = "$msvcLibPath;$env:LIB"
-              Write-Host "Added MSVC lib to LIB: $msvcLibPath"
-            } else {
-              Write-Warning "MSVC lib path not found: $msvcLibPath"
-            }
-          }
-          # Explicitly add UCRT library path to LIB (for ucrtd.lib, etc.)
-          # Search SDK versions in Lib directory (not bin) to find UCRT libraries
+
+      # 6. Configure CMake (same shell: vcvarsall → LIB paths → cmake)
+      - name: Configure CMake
+        run: |
+          # Setup MSVC env
+          $vcvarsAll = $env:VCVARSALL_PATH
+          if (-not $vcvarsAll -or -not (Test-Path $vcvarsAll)) { Write-Error "vcvarsall not found"; exit 1 }
+          & $vcvarsAll x64
+
+          # Explicitly add SDK/MSVC/UCRT libs to LIB
           $sdkLibRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\Lib"
           if (Test-Path $sdkLibRoot) {
-            $sdkVersions = Get-ChildItem $sdkLibRoot -Directory | Where-Object { $_.Name -match '^10\.' }
-            Write-Host "Found SDK lib versions: $($sdkVersions.Name -join ', ')"
-            $sdkVer = $sdkVersions | Sort-Object Name -Descending | Select-Object -First 1
+            $sdkVer = Get-ChildItem $sdkLibRoot -Directory | Where-Object { $_.Name -match '^10\.' } | Sort-Object Name -Descending | Select-Object -First 1
             if ($sdkVer) {
-              $ucrtLibPath = "$sdkLibRoot\$($sdkVer.Name)\ucrt\x64"
-              Write-Host "Checking UCRT lib path: $ucrtLibPath"
-              if (Test-Path $ucrtLibPath) {
-                $env:LIB = "$ucrtLibPath;$env:LIB"
-                Write-Host "Added UCRT lib to LIB: $ucrtLibPath"
-              } else {
-                Write-Warning "UCRT lib path not found: $ucrtLibPath"
-                # Fallback: try common version paths
-                $fallbackPaths = @(
-                  "$sdkLibRoot\10.0.26100.0\ucrt\x64",
-                  "$sdkLibRoot\10.0.22621.0\ucrt\x64",
-                  "$sdkLibRoot\10.0.19041.0\ucrt\x64"
-                )
-                foreach ($path in $fallbackPaths) {
-                  if (Test-Path $path) {
-                    $env:LIB = "$path;$env:LIB"
-                    Write-Host "Added fallback UCRT lib to LIB: $path"
-                    break
-                  }
-                }
+              $env:LIB = "$sdkLibRoot\$($sdkVer.Name)\ucrt\x64;$sdkLibRoot\$($sdkVer.Name)\um\x64;$env:LIB"
+              $vsInstallDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools"
+              if (-not (Test-Path $vsInstallDir)) { $vsInstallDir = "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools" }
+              $msvcPath = Join-Path $vsInstallDir "VC\Tools\MSVC"
+              if (Test-Path $msvcPath) {
+                $latest = Get-ChildItem $msvcPath -Directory | Sort-Object Name -Descending | Select-Object -First 1
+                $env:LIB = "$($latest.FullName)\lib\x64;$env:LIB"
               }
-            } else {
-              Write-Warning "No SDK version 10.* found in $sdkLibRoot"
             }
-          } else {
-            Write-Warning "SDK Lib root not found: $sdkLibRoot"
           }
-          # Debug: print final LIB path
-          Write-Host "Final LIB path: $env:LIB"
-          # Configure CMake in SAME shell session so vcvarsall env persists
+          Write-Host "Final LIB: $env:LIB"
+
+          # CMake configure
           cmake -S . -B build `
             -G "${{ env.CMAKE_GENERATOR }}" `
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
@@ -250,32 +193,24 @@ jobs:
             -DPython3_ROOT_DIR="${{ env.Python_ROOT_DIR }}" `
             -DPython3_FIND_REGISTRY=NEVER
 
-      - name: Build Open3D (Core + Python Module)
-        run: |
-          cmake --build build --config ${{ env.BUILD_TYPE }} --target pybind -- -j4
-
-      - name: Build Python Wheel
-        run: |
-          cmake --build build --config ${{ env.BUILD_TYPE }} --target pip-package -- -j4
+      # 7. Build wheel (cmake target pip-package handles core + pybind + wheel)
+      - name: Build wheel
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} --target pip-package -- -j4
         env:
           PYTHON_EXECUTABLE: ${{ env.Python_ROOT_DIR }}/python.exe
 
-      - name: Verify wheel
-        run: |
-          $wheel = Get-ChildItem build/lib/python_package/pip_package/*.whl
-          Write-Host "Found wheel: $($wheel.Name)"
-          python -m pip install --dry-run $wheel.FullName
-
+      # 8. Test wheel installation
       - name: Test wheel installation
         run: |
           $wheel = Get-ChildItem build/lib/python_package/pip_package/*.whl
           pip install $wheel.FullName
-          python -c "import open3d as o3d; print('Open3D version:', o3d.__version__); print('CUDA available:', o3d.core.cuda.is_available())"
+          python -c "import open3d as o3d; print('Open3D version:', o3d.__version__)"
 
+      # 9. Upload wheel artifact
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: open3d-wheel-windows-x64-cpu-${{ matrix.python_version }}
+          name: open3d-wheel-windows-x64-cpu-3.14
           path: build/lib/python_package/pip_package/*.whl
           retention-days: 30
           if-no-files-found: error
