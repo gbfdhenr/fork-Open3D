@@ -109,6 +109,26 @@ jobs:
             --add Microsoft.VisualStudio.Component.Windows11SDK --includeRecommended" `
             --no-progress -y
 
+      # Install ISPC compiler (required for Open3D ISPC kernels) and add to PATH
+      - name: Install ISPC
+        run: |
+          choco install ispc --no-progress -y
+          # Find ispc_isas.exe and add its directory to PATH
+          $ispcDirs = @(
+            "C:\ProgramData\chocolatey\lib\ispc*",
+            "C:\Program Files\ISPC*",
+            "C:\Program Files (x86)\ISPC*",
+            "C:\tools\ispc*"
+          )
+          foreach ($base in $ispcDirs) {
+            $files = Get-ChildItem $base -Recurse -ErrorAction SilentlyContinue -File -Filter "ispc_isas.exe" 2>$null
+            foreach ($f in $files) {
+              $dir = $f.DirectoryName
+              "$dir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+              Write-Host "Added ISPC to PATH: $dir"
+            }
+          }
+
       # 5. Setup MSVC environment, PATH (cl.exe, rc.exe) and LIB paths
       - name: Setup MSVC environment
         run: |
