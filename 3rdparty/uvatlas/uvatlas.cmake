@@ -1,6 +1,27 @@
 include(ExternalProject)
 
-# uvatlas needs some headers from directx 
+# Detect Windows SDK include path for DirectX-Headers (needs excpt.h from UCRT)
+if(WIN32)
+    set(WIN_SDK_INCLUDE_ROOT "$ENV{ProgramFiles(x86)}/Windows Kits/10/Include")
+    if(EXISTS ${WIN_SDK_INCLUDE_ROOT})
+        file(GLOB WIN_SDK_VERSIONS RELATIVE ${WIN_SDK_INCLUDE_ROOT} ${WIN_SDK_INCLUDE_ROOT}/10.*)
+        if(WIN_SDK_VERSIONS)
+            list(SORT WIN_SDK_VERSIONS)
+            list(REVERSE WIN_SDK_VERSIONS)
+            set(WIN_SDK_VER ${WIN_SDK_VERSIONS[0]})
+            set(WIN_SDK_INCLUDE_DIRS
+                "${WIN_SDK_INCLUDE_ROOT}/${WIN_SDK_VER}/um"
+                "${WIN_SDK_INCLUDE_ROOT}/${WIN_SDK_VER}/ucrt"
+                "${WIN_SDK_INCLUDE_ROOT}/${WIN_SDK_VER}/shared"
+                "${WIN_SDK_INCLUDE_ROOT}/${WIN_SDK_VER}/winrt"
+                "${WIN_SDK_INCLUDE_ROOT}/${WIN_SDK_VER}/cpp"
+            )
+            string(REPLACE ";" " " WIN_SDK_INCLUDE_DIRS_STR "${WIN_SDK_INCLUDE_DIRS}")
+        endif()
+    endif()
+endif()
+
+# uvatlas needs some headers from directx
 ExternalProject_Add(
     ext_directxheaders
     PREFIX uvatlas
@@ -16,6 +37,7 @@ ExternalProject_Add(
         -DDXHEADERS_BUILD_GOOGLE_TEST=OFF
         -DDXHEADERS_BUILD_TEST=OFF
         -DINSTALL_GTEST=OFF
+        ${WIN_SDK_INCLUDE_DIRS_STR}
 )
 
 # uvatlas needs DirectXMath
